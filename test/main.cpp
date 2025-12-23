@@ -41,7 +41,7 @@ void runInsertTest(int numInsertions, int minLen = 1, int maxLen = 20)
 	std::mt19937 gen(rd());
 
 	// 创建两个数据结构实例
-	Document doc;
+	PieceCRDT doc;
 	SimpleText validator;
 	std::set<std::string> test_set;
 	size_t tot_len = 0;
@@ -65,7 +65,7 @@ void runInsertTest(int numInsertions, int minLen = 1, int maxLen = 20)
 
 		// test_set.insert(str);
 		Anchor anchor = doc.anchor(insert_pos);
-		Insertion insertion(ReplicaID{0, 0}, operation_stamp++, anchor, str);
+		Insertion insertion(doc.id(), operation_stamp++, anchor, str);
 		doc.insert(insertion);
 		tot_len += str.size();
 
@@ -106,7 +106,7 @@ void runInsertDeleteTest(int numOps, int minLen = 1, int maxLen = 20)
 	std::random_device rd;
 	std::mt19937 gen(rd());
 
-	Document doc;
+	PieceCRDT doc;
 	SimpleText validator;
 	size_t tot_len = 0;
 	uint32_t operation_stamp = 1;
@@ -120,7 +120,7 @@ void runInsertDeleteTest(int numOps, int minLen = 1, int maxLen = 20)
 
 		validator.insert(insert_pos, str);
 		Anchor anchor = doc.anchor(insert_pos);
-		Insertion ins(ReplicaID{0, 0}, operation_stamp++, anchor, str);
+		Insertion ins(doc.id(), operation_stamp++, anchor, str);
 		doc.insert(ins);
 		tot_len += str.size();
 
@@ -139,14 +139,14 @@ void runInsertDeleteTest(int numOps, int minLen = 1, int maxLen = 20)
 
 			Anchor begin = doc.anchor(del_pos);
 			Anchor end = doc.anchor(del_pos + len);
-			Deletion del(ReplicaID{0, 0}, operation_stamp++, begin, end);
+			Deletion del(doc.id(), operation_stamp++, begin, end);
 			doc.del(del);
 
 			validator.erase(del_pos, len);
 			tot_len -= len;
 		}
 
-		// 构建 Document 内容并验证
+		// 构建 PieceCRDT 内容并验证
 		std::stringstream tree_content;
 		for (auto it = doc.begin(), end_it = --doc.end(); it != end_it; ++it)
 		{
@@ -172,14 +172,14 @@ void runDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	std::random_device rd;
 	std::mt19937 gen(rd());
 
-	Document doc;
+	PieceCRDT doc;
 	SimpleText validator;
 	uint32_t op_stamp = 1;
 
 	// 1. 插入长度为 5000 的初始文本
 	std::string initial = generateRandomString(gen, start_len, start_len);
 	Anchor init_anchor = doc.anchor(0);
-	Insertion ins(ReplicaID{0, 0}, op_stamp++, init_anchor, initial);
+	Insertion ins(doc.id(), op_stamp++, init_anchor, initial);
 	doc.insert(ins);
 	validator.insert(0, initial);
 
@@ -204,14 +204,14 @@ void runDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 		std::uniform_int_distribution<size_t> pos_dist(0, current_size - len);
 		size_t pos = pos_dist(gen);
 
-		// 在 Document 上执行删除
+		// 在 PieceCRDT 上执行删除
 		Anchor begin = doc.anchor(pos);
 		Anchor end = doc.anchor(pos + len);
-		Deletion del(ReplicaID{0, 0}, op_stamp, begin, end);
+		Deletion del(doc.id(), op_stamp, begin, end);
 		doc.del(del);
 
 		// 记录这次删除的 OperationID
-		deletions.push_back(OperationID{ReplicaID{0, 0}, op_stamp});
+		deletions.push_back(OperationID{doc.id(), op_stamp});
 
 		// 在验证器上执行相同删除
 		validator.erase(pos, len);
@@ -248,7 +248,7 @@ void runDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	std::shuffle(deletions.begin(), deletions.end(), gen);
 	for (auto &opid : deletions)
 	{
-		UndoOperation uop(ReplicaID{0, 0}, op_stamp++, opid);
+		UndoOperation uop(doc.id(), op_stamp++, opid);
 		doc.undo(uop);
 		validator.undo(opid.stamp);
 	}
@@ -258,7 +258,7 @@ void runDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	std::shuffle(deletions.begin(), deletions.end(), gen);
 	for (auto &opid : deletions)
 	{
-		RedoOperation rop(ReplicaID{0, 0}, op_stamp++, opid);
+		RedoOperation rop(doc.id(), op_stamp++, opid);
 		doc.redo(rop);
 		validator.redo(opid.stamp);
 	}
@@ -272,13 +272,13 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	std::random_device rd;
 	std::mt19937 gen(rd());
 
-	DocumentValidator doc;
+	PieceCRDTValidator doc;
 	uint32_t op_stamp = 1;
 
 	// 1. 插入长度为 5000 的初始文本
 	std::string initial = generateRandomString(gen, start_len, start_len);
 	Anchor init_anchor = doc.anchor(0);
-	Insertion ins(ReplicaID{0, 0}, op_stamp++, init_anchor, initial);
+	Insertion ins(doc.id(), op_stamp++, init_anchor, initial);
 	doc.insert(ins);
 
 	std::vector<int> deletion_stamps;
@@ -302,11 +302,11 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 		std::uniform_int_distribution<size_t> pos_dist(0, current_size - len);
 		size_t pos = pos_dist(gen);
 
-		// 在 Document 上执行删除
+		// 在 PieceCRDT 上执行删除
 		std::cout << "Deleting at pos " << pos << " length " << len << " stamp " << deletion_stamps[i] << "\n";
 		Anchor begin = doc.historyAnchor(pos);
 		Anchor end = doc.historyAnchor(pos + len);
-		Deletion del(ReplicaID{0, 0}, deletion_stamps[i], begin, end);
+		Deletion del(doc.id(), deletion_stamps[i], begin, end);
 		doc.del(del);
 
 		if (!doc.validate())
@@ -321,7 +321,7 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	for (auto &opid : deletion_stamps)
 	{
 		std::cout << "Undoing operation stamp " << opid << "\n";
-		UndoOperation uop(ReplicaID{0, 0}, op_stamp++, OperationID{ReplicaID{0, 0}, static_cast<uint32_t>(opid)});
+		UndoOperation uop(doc.id(), op_stamp++, OperationID{doc.id(), static_cast<uint32_t>(opid)});
 		doc.undo(uop);
 		doc.validate();
 	}
@@ -331,7 +331,7 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	for (auto &opid : deletion_stamps)
 	{
 		std::cout << "Redoing operation stamp " << opid << "\n";
-		RedoOperation rop(ReplicaID{0, 0}, op_stamp++, OperationID{ReplicaID{0, 0}, static_cast<uint32_t>(opid)});
+		RedoOperation rop(doc.id(), op_stamp++, OperationID{doc.id(), static_cast<uint32_t>(opid)});
 		doc.redo(rop);
 		doc.validate();
 	}
@@ -339,24 +339,24 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 
 void coverTest()
 {
-	DocumentValidator doc;
+	PieceCRDTValidator doc;
 
 	std::string initial("012345678901234567890123456789");
 	Anchor init_anchor = doc.anchor(0);
-	Insertion ins(ReplicaID{0, 0}, 1, init_anchor, initial);
+	Insertion ins(doc.id(), 1, init_anchor, initial);
 	doc.insert(ins);
 
 	Anchor begin = doc.historyAnchor(5);
 	Anchor end = doc.historyAnchor(25);
-	Deletion del1(ReplicaID{0, 0}, 3, begin, end);
+	Deletion del1(doc.id(), 3, begin, end);
 	doc.del(del1);
 
 	begin = doc.historyAnchor(10);
 	end = doc.historyAnchor(20);
-	Deletion del2(ReplicaID{0, 0}, 2, begin, end);
+	Deletion del2(doc.id(), 2, begin, end);
 	doc.del(del2);
 
-	UndoOperation uop(ReplicaID{0, 0}, 4, OperationID{ReplicaID{0, 0}, del1.stamp});
+	UndoOperation uop(doc.id(), 4, OperationID{doc.id(), del1.stamp});
 	doc.undo(uop);
 
 	doc.validate();
@@ -366,7 +366,7 @@ void speedTest(int numInsertions, int minLen = 1, int maxLen = 20)
 {
 	std::random_device rd;
 	std::mt19937 gen(rd());
-	Document doc;
+	PieceCRDT doc;
 	size_t tot_len = 0;
 	uint32_t operation_stamp = 3;
 	auto start = std::chrono::high_resolution_clock::now();
@@ -376,7 +376,7 @@ void speedTest(int numInsertions, int minLen = 1, int maxLen = 20)
 		std::uniform_int_distribution<size_t> pos_dist(0, tot_len);
 		size_t insert_pos = pos_dist(gen);
 		Anchor anchor = doc.anchor(insert_pos);
-		Insertion insertion(ReplicaID{0, 0}, operation_stamp++, anchor, str);
+		Insertion insertion(doc.id(), operation_stamp++, anchor, str);
 		doc.insert(insertion);
 		tot_len += str.size();
 		// if ((i + 1) % 10 == 0 && tot_len > 0) {
@@ -453,13 +453,13 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 	std::random_device rd;
 	std::mt19937 gen(rd());
 
-	DocumentValidator doc;
+	PieceCRDTValidator doc;
 	uint32_t op_stamp = max_file_stamp + 1;
 
 	// 1. 插入长度为 5000 的初始文本
 	std::string initial = generateRandomString(gen, start_len, start_len);
 	Anchor init_anchor = doc.anchor(0);
-	Insertion ins(ReplicaID{0, 0}, 1, init_anchor, initial);
+	Insertion ins(doc.id(), 1, init_anchor, initial);
 	doc.insert(ins);
 
 	// 2. 执行文件中的操作
@@ -473,7 +473,7 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 			
 			Anchor begin = doc.historyAnchor(op.pos);
 			Anchor end = doc.historyAnchor(op.pos + op.len);
-			Deletion del(ReplicaID{0, 0}, op.stamp, begin, end);
+			Deletion del(doc.id(), op.stamp, begin, end);
 			doc.del(del);
 
 			if (!doc.validate())
@@ -485,7 +485,7 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 		else if (op.type == 'U')
 		{
 			std::cout << "Undoing operation stamp " << op.stamp << "\n";
-			UndoOperation uop(ReplicaID{0, 0}, op_stamp++, OperationID{ReplicaID{0, 0}, static_cast<uint32_t>(op.stamp)});
+			UndoOperation uop(doc.id(), op_stamp++, OperationID{doc.id(), static_cast<uint32_t>(op.stamp)});
 			doc.undo(uop);
 			
 			if (!doc.validate())
@@ -497,7 +497,7 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 		else if (op.type == 'R')
 		{
 			std::cout << "Redoing operation stamp " << op.stamp << "\n";
-			RedoOperation rop(ReplicaID{0, 0}, op_stamp++, OperationID{ReplicaID{0, 0}, static_cast<uint32_t>(op.stamp)});
+			RedoOperation rop(doc.id(), op_stamp++, OperationID{doc.id(), static_cast<uint32_t>(op.stamp)});
 			doc.redo(rop);
 			
 			if (!doc.validate())

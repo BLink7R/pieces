@@ -32,7 +32,7 @@ struct StoredOperation
 
 struct Replica
 {
-	ReplicaID id{0, 0};
+	ReplicaID id{};
 	mutable std::vector<std::unique_ptr<StoredOperation>> segments; // created segments
 
 	bool operator<(const Replica &other) const
@@ -84,6 +84,9 @@ struct StoredAnchor
 {
 	Segment *seg{nullptr};
 	size_t pos{0};
+
+	StoredAnchor(Segment *seg = nullptr, size_t pos = 0)
+		: seg(seg), pos(pos) {}
 
 	bool operator==(const StoredAnchor &other) const
 	{
@@ -306,10 +309,7 @@ public:
 
 	Iterator insert(Segment *segment)
 	{
-		StoredAnchor anchor{
-			.seg = segment->parent,
-			.pos = segment->insert_pos,
-		};
+		StoredAnchor anchor(segment->parent, segment->insert_pos);
 		Iterator it = find(anchor);
 		size_t offset = anchor.pos - it->segPos();
 
@@ -440,21 +440,31 @@ protected:
 	}
 };
 
-class Document
+class PieceCRDT
 {
+private:
+	uint32_t lamport_stamp;
+
 protected:
+	const ReplicaID local_id;
 	OrderedSet<Replica, 4> replicas;
 	PieceTree<4> piece_tree;
 	RangeTree<bool, 4> deletions;
-	uint32_t stamp_counter{0};
 
 public:
-	Document()
-		: replicas(), piece_tree(storeOp<Segment>(ReplicaID(), 0, "EOF"))
+	PieceCRDT()
+		: lamport_stamp(0),
+		  local_id(uuids::uuid_system_generator{}()),
+		  piece_tree(storeOp<Segment>(local_id, 0, std::string(1, EOF)))
 	{
 	}
 
-	~Document() = default;
+	~PieceCRDT() = default;
+
+	const ReplicaID id() const
+	{
+		return local_id;
+	}
 
 	auto begin()
 	{
@@ -558,6 +568,7 @@ public:
 		stored_op->left = &*left_it;
 		stored_op->right = &*right_it;
 
+		// TODO: no need to redo if op is local change.
 		redoRangeOp(stored_op, [](Piece *piece, StoredRangeOp *op)
 		{
 			if (piece->tombStone == nullptr || *piece->tombStone < *op)
@@ -945,10 +956,7 @@ protected:
 		if (!seg_ptr || seg_ptr->type != OperationType::Insert)
 			return StoredAnchor();
 
-		return StoredAnchor{
-			.seg = static_cast<Segment *>(seg_ptr.get()),
-			.pos = anchor.pos,
-		};
+		return StoredAnchor(static_cast<Segment *>(seg_ptr.get()), anchor.pos);
 	}
 
 	template <typename T, typename... Args>
@@ -962,8 +970,9 @@ protected:
 		requires std::is_base_of_v<StoredOperation, T>
 	T *storeOp(const Replica *replica, uint32_t stamp, Args &&...args)
 	{
-		if (replica->segments.size() <= stamp)
-			replica->segments.resize(stamp + 1);
+		lamport_stamp = std::max(lamport_stamp, stamp) + 1;
+
+		replica->segments.resize(lamport_stamp);
 		assert(replica->segments[stamp] == nullptr);
 		replica->segments[stamp] = std::make_unique<T>(std::forward<Args>(args)...);
 

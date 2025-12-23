@@ -3,28 +3,15 @@
 #include <cstdint>
 #include <string>
 
+#define UUID_SYSTEM_GENERATOR
+#include <stduuid/uuid.h>
+
 // guid
-struct ReplicaID
-{
-	uint64_t high{0};
-	uint64_t low{0};
-
-	bool operator<(const ReplicaID &other) const
-	{
-		if (high != other.high)
-			return high < other.high;
-		return low < other.low;
-	}
-
-	bool operator!=(const ReplicaID &other) const
-	{
-		return high != other.high || low != other.low;
-	}
-};
+using ReplicaID = uuids::uuid;
 
 struct OperationID
 {
-	ReplicaID replica{0, 0};
+	ReplicaID replica{};
 	uint32_t stamp{0};
 
 	bool operator<(const OperationID &other) const
@@ -61,7 +48,7 @@ struct Operation
 
 struct Anchor
 {
-	ReplicaID replica{0, 0};
+	ReplicaID replica{};
 	uint32_t stamp{0};
 	size_t pos{0};
 };

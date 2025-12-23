@@ -163,7 +163,7 @@ public:
 	}
 };
 
-class DocumentValidator : public Document
+class PieceCRDTValidator : public PieceCRDT
 {
 public:
 	bool validate()
@@ -214,11 +214,11 @@ public:
 			}
 		}
 		bool valid = reconstructed == toString();
-		std::cout << "DocumentValidator: content " << (valid ? "matches" : "differs")
+		std::cout << "PieceCRDTValidator: content " << (valid ? "matches" : "differs")
 				  << ", expected size " << reconstructed.size()
 				  << ", actual size " << size() << "\n";
-		// std::cout << "DocumentValidator: expect content \"" << reconstructed << "\"\n";
-		// std::cout << "DocumentValidator: actual content \"" << toString() << "\"\n";
+		// std::cout << "PieceCRDTValidator: expect content \"" << reconstructed << "\"\n";
+		// std::cout << "PieceCRDTValidator: actual content \"" << toString() << "\"\n";
 		return valid;
 	}
 };
