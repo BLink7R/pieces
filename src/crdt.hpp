@@ -58,7 +58,6 @@ struct Insertion : public Operation
 	Anchor anchor;
 	std::string str;
 
-	// 完整构造函数
 	Insertion(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor, std::string text)
 		: Operation(replica, stamp, OperationType::Insert), anchor(anchor), str(std::move(text))
 	{
