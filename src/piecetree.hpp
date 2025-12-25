@@ -6,6 +6,7 @@
 #include <memory>
 #include <tuple>
 #include <unordered_set>
+#include <utf8cpp/utf8.h>
 #include <utility>
 #include <vector>
 
@@ -63,16 +64,17 @@ struct Segment : public StoredOperation
 	Piece *insert_piece{nullptr};
 	mutable std::vector<Segment *> split_child; // as segments are usually small, vector is faster
 	std::unique_ptr<const char[]> data{nullptr};
-	size_t size{0};
 	StoredDeletion *undo_op{nullptr};
 
 	Segment(const std::string &str)
-		: StoredOperation(OperationType::Insert), size(str.size())
+		: StoredOperation(OperationType::Insert)
 	{
 		data = std::make_unique<const char[]>(str.size() + 1);
 		memcpy(const_cast<char *>(data.get()), str.c_str(), str.size() + 1);
 	}
 	~Segment() = default;
+
+	size_t len() const;
 
 	Segment(Segment &&other) noexcept = default;
 	Segment &operator=(Segment &&other) noexcept = default;
@@ -190,16 +192,21 @@ struct PieceInfo
 };
 
 // Segments are split into pieces according to global offsets.
+// TODO: limit the length of piece, as the split operation is O(n) in the length of piece.
 struct Piece
 {
 	Segment *seg{nullptr};
 	const char *data{nullptr};
 	size_t len{0};
+	size_t seg_pos{0};
 	StoredRangeOp *tombStone{nullptr};
 
 	Piece() = default;
-	Piece(Segment *seg, const char *data, size_t len)
-		: seg(seg), data(data), len(len) {}
+	Piece(Segment *seg)
+		: seg(seg),
+		  data(seg->data.get()),
+		  len(utf8::distance(data, data + strlen(data))),
+		  seg_pos(0) {}
 
 	bool isRemoved() const
 	{
@@ -211,16 +218,16 @@ struct Piece
 		return {.total = len, .visible = isRemoved() ? 0 : len};
 	}
 
-	size_t segPos() const
-	{
-		return data - seg->data.get();
-	}
-
 	bool operator<(const Piece &other) const
 	{
 		return data < other.data;
 	}
 };
+
+size_t Segment::len() const
+{
+	return last_piece->seg_pos + last_piece->len;
+}
 
 template <uint8_t N>
 class PieceTree : public Sequence<PieceInfo, Piece, N>
@@ -234,7 +241,7 @@ public:
 
 	PieceTree(Segment *initial_segment)
 	{
-		auto it = this->insertBefore(this->end(), Piece(initial_segment, initial_segment->data.get(), initial_segment->size));
+		auto it = this->insertBefore(this->end(), Piece(initial_segment));
 		initial_segment->last_piece = &*it;
 	}
 
@@ -269,9 +276,9 @@ public:
 			piece = (*seg_it)->insert_piece;
 		assert(piece->seg == seg);
 		auto it = Iterator(piece);
-		if (piece->segPos() <= anchor.pos)
+		if (piece->seg_pos <= anchor.pos)
 			return it;
-		it = findHistory(it.position().total + anchor.pos - piece->segPos());
+		it = findHistory(it.position().total + anchor.pos - piece->seg_pos);
 		assert(it->seg == seg);
 		return it;
 	}
@@ -284,7 +291,7 @@ public:
 		Anchor anchor;
 		anchor.replica = seg->replica->id;
 		anchor.stamp = seg->stamp;
-		anchor.pos = pos - it.position().total + it->segPos();
+		anchor.pos = pos - it.position().total + it->seg_pos;
 		return anchor;
 	}
 
@@ -297,21 +304,21 @@ public:
 		Anchor anchor;
 		anchor.replica = seg->replica->id;
 		anchor.stamp = seg->stamp;
-		anchor.pos = pos - it.position().visible + it->segPos();
+		anchor.pos = pos - it.position().total + it->seg_pos;
 		return anchor;
 	}
 
 	size_t historyOffset(const StoredAnchor &anchor)
 	{
 		Iterator it = find(anchor);
-		return anchor.pos + it.position().total - it->segPos();
+		return anchor.pos + it.position().total - it->seg_pos;
 	}
 
 	Iterator insert(Segment *segment)
 	{
 		StoredAnchor anchor(segment->parent, segment->insert_pos);
 		Iterator it = find(anchor);
-		size_t offset = anchor.pos - it->segPos();
+		size_t pos = anchor.pos - it->seg_pos;
 
 		Segment *parent = segment->parent;
 		auto conflict_it = std::lower_bound(
@@ -325,7 +332,7 @@ public:
 			return a->replica->id < b->replica->id;
 		});
 		// handle insertion ambiguity
-		if (offset == 0 && parent->split_child.size() > 0)
+		if (pos == 0 && parent->split_child.size() > 0)
 		{
 			Piece *left_half = nullptr;
 			if (conflict_it == parent->split_child.begin() || (*(conflict_it - 1))->insert_pos != anchor.pos)
@@ -349,12 +356,12 @@ public:
 		}
 		else
 		{
-			it = split(it, offset);
+			it = split(it, pos);
 		}
 		segment->insert_piece = &*it;
 		parent->split_child.insert(conflict_it, segment);
 
-		Piece new_node(segment, segment->data.get(), strlen(segment->data.get()));
+		Piece new_node(segment);
 		auto new_it = this->insertAfter(it, new_node);
 		segment->last_piece = &*new_it;
 
@@ -362,16 +369,22 @@ public:
 		return new_it;
 	}
 
-	// return the left part, creates new piece even if offset == 0
-	Iterator split(Iterator it, size_t offset)
+	// return the left part, creates new piece even if pos == 0
+	Iterator split(Iterator it, size_t pos)
 	{
-		assert(offset < it->len);
+		assert(pos < it->len);
+
+		size_t offset = 0;
+		const char *ptr = it->data;
+		utf8::advance(ptr, pos, ptr + 4 * it->len); // max 4 bytes per utf8 char
+		offset = ptr - it->data;
 
 		// new node is the left part
 		Piece new_node = *it;
-		new_node.len = offset;
+		new_node.len = pos;
 		it->data += offset;
-		it->len -= offset;
+		it->seg_pos += pos;
+		it->len -= pos;
 		it.key() = it->size(); // no need to update(), insertBefore() will do it
 
 		return this->insertBefore(it, new_node);
@@ -405,9 +418,9 @@ protected:
 	auto addTag(RangeTag tag, PieceTree &piece_tree)
 	{
 		auto piece_it = piece_tree.find(tag.anchor);
-		size_t offset = tag.anchor.pos - piece_it->segPos();
-		if (offset != 0)
-			piece_it = ++piece_tree.split(piece_it, offset);
+		size_t pos = tag.anchor.pos - piece_it->seg_pos;
+		if (pos != 0)
+			piece_it = ++piece_tree.split(piece_it, pos);
 
 		size_t history_pos = piece_it.position().total;
 
@@ -455,7 +468,7 @@ public:
 	PieceCRDT()
 		: lamport_stamp(0),
 		  local_id(uuids::uuid_system_generator{}()),
-		  piece_tree(storeOp<Segment>(local_id, 0, std::string(1, EOF)))
+		  piece_tree(storeOp<Segment>(local_id, 0, "EOF"))
 	{
 	}
 
@@ -716,7 +729,7 @@ protected:
 		{
 			auto *stored_op = storeOp<StoredDeletion>(target->replica, target->stamp);
 			auto begin = StoredAnchor(target, 0);
-			auto end = StoredAnchor(target, target->size - 1);
+			auto end = StoredAnchor(target, target->len() - 1);
 			auto [left, right] = deletions.apply(
 				RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
 			auto [left_it, left_piece] = left;
@@ -764,7 +777,7 @@ protected:
 		auto it = left_it;
 		for (++it;; ++it)
 		{
-			for (; begin_piece->seg != it->anchor.seg || begin_piece->segPos() != it->anchor.pos; ++begin_piece)
+			for (; begin_piece->seg != it->anchor.seg || begin_piece->seg_pos != it->anchor.pos; ++begin_piece)
 			{
 				updateFunc(&*begin_piece, stored_op);
 			}
@@ -870,7 +883,7 @@ protected:
 		for (++it;; ++it)
 		{
 			// update piece tree
-			for (; begin_piece->seg != it->anchor.seg || begin_piece->segPos() != it->anchor.pos; ++begin_piece)
+			for (; begin_piece->seg != it->anchor.seg || begin_piece->seg_pos != it->anchor.pos; ++begin_piece)
 			{
 				updateFunc(&*begin_piece, newest);
 			}
