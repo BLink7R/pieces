@@ -304,7 +304,7 @@ public:
 		Anchor anchor;
 		anchor.replica = seg->replica->id;
 		anchor.stamp = seg->stamp;
-		anchor.pos = pos - it.position().total + it->seg_pos;
+		anchor.pos = pos - it.position().visible + it->seg_pos;
 		return anchor;
 	}
 
