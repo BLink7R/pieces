@@ -64,6 +64,8 @@ struct Segment : public StoredOperation
 	Piece *insert_piece{nullptr};
 	mutable std::vector<Segment *> split_child; // as segments are usually small, vector is faster
 	std::unique_ptr<const char[]> data{nullptr};
+	std::unique_ptr<size_t[]> line_breaks{nullptr};
+	size_t line_break_count{0};
 	StoredDeletion *undo_op{nullptr};
 
 	Segment(const std::string &str)
@@ -71,10 +73,49 @@ struct Segment : public StoredOperation
 	{
 		data = std::make_unique<const char[]>(str.size() + 1);
 		memcpy(const_cast<char *>(data.get()), str.c_str(), str.size() + 1);
+
+		// collect newline positions in UTF-8 character offsets
+		if (!str.empty())
+		{
+			std::vector<size_t> breaks;
+			const char *it = str.data();
+			const char *end = it + str.size();
+			size_t char_index = 0;
+			while (it < end)
+			{
+				if (*it == '\r')
+				{
+					if ((it + 1) < end && *(it + 1) == '\n')
+						breaks.push_back(char_index + 1);
+					else
+						breaks.push_back(char_index);
+				}
+				else if (*it == '\n')
+					breaks.push_back(char_index + 1);
+				utf8::next(it, end);
+			}
+			line_break_count = breaks.size();
+			if (line_break_count != 0)
+			{
+				line_breaks = std::make_unique<size_t[]>(line_break_count);
+				for (size_t i = 0; i < line_break_count; ++i)
+					line_breaks[i] = breaks[i];
+			}
+		}
 	}
 	~Segment() = default;
 
 	size_t len() const;
+
+	size_t findLineBreak(size_t utf8_offset) const
+	{
+		if (line_break_count == 0)
+			return 0;
+		const size_t *begin = line_breaks.get();
+		const size_t *end = begin + line_break_count;
+		const size_t *it = std::lower_bound(begin, end, utf8_offset);
+		return static_cast<size_t>(it - begin);
+	}
 
 	Segment(Segment &&other) noexcept = default;
 	Segment &operator=(Segment &&other) noexcept = default;
