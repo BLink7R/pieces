@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstddef>
 #include <memory>
+#include <random>
 #include <tuple>
 #include <unordered_set>
 #include <utf8cpp/utf8.h>
@@ -498,6 +499,7 @@ class PieceCRDT
 {
 private:
 	uint32_t lamport_stamp;
+	std::mt19937 generator;
 
 protected:
 	const ReplicaID local_id;
@@ -508,7 +510,8 @@ protected:
 public:
 	PieceCRDT()
 		: lamport_stamp(0),
-		  local_id(uuids::uuid_system_generator{}()),
+		  generator(std::random_device{}()),
+		  local_id(uuids::uuid_random_generator(generator)()),
 		  piece_tree(storeOp<Segment>(local_id, 0, "EOF"))
 	{
 	}

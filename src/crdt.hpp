@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <string>
 
-#define UUID_SYSTEM_GENERATOR
 #include <stduuid/uuid.h>
 
 // guid
