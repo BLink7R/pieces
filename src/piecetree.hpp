@@ -18,19 +18,9 @@
 struct Replica;
 struct Segment;
 struct Piece;
-
-struct StoredOperation
-{
-	const Replica *replica{nullptr};
-	uint32_t stamp{0};
-	OperationType type;
-	bool has_undo{false};
-
-	StoredOperation(OperationType type)
-		: type(type) {}
-
-	bool operator<(const StoredOperation &other) const;
-};
+struct StoredOperation;
+struct StoredRangeOp;
+struct StoredDeletion;
 
 struct Replica
 {
@@ -47,14 +37,24 @@ struct Replica
 	}
 };
 
-bool StoredOperation::operator<(const StoredOperation &other) const
+struct StoredOperation
 {
-	if (stamp != other.stamp)
-		return stamp < other.stamp;
-	return replica->id < other.replica->id;
-}
+	const Replica *replica{nullptr};
+	uint32_t stamp{0};
+	OperationType type;
+	bool has_undo{false};
 
-struct StoredDeletion;
+	StoredOperation(OperationType type)
+		: type(type) {}
+
+	bool operator<(const StoredOperation &other) const
+	{
+		if (stamp != other.stamp)
+			return stamp < other.stamp;
+		return replica->id < other.replica->id;
+	}
+};
+
 // Text is stored in segments. Whenever text is inserted, a new segment is created,
 // and the target segment with the insertion offset is stored, keeping the target unchanged.
 struct Segment : public StoredOperation
@@ -65,6 +65,7 @@ struct Segment : public StoredOperation
 	Piece *insert_piece{nullptr};
 	mutable std::vector<Segment *> split_child; // as segments are usually small, vector is faster
 	std::unique_ptr<const char[]> data{nullptr};
+	size_t len{0};
 	std::unique_ptr<size_t[]> line_breaks{nullptr};
 	size_t line_break_count{0};
 	StoredDeletion *undo_op{nullptr};
@@ -74,6 +75,7 @@ struct Segment : public StoredOperation
 	{
 		data = std::make_unique<const char[]>(str.size() + 1);
 		memcpy(const_cast<char *>(data.get()), str.c_str(), str.size() + 1);
+		len = utf8::distance(data.get(), data.get() + str.size());
 
 		// collect newline positions in UTF-8 character offsets
 		if (!str.empty())
@@ -105,8 +107,6 @@ struct Segment : public StoredOperation
 		}
 	}
 	~Segment() = default;
-
-	size_t len() const;
 
 	size_t findLineBreak(size_t utf8_offset) const
 	{
@@ -150,7 +150,6 @@ enum class TagStatus : uint8_t
 	UnUsed,
 };
 
-struct StoredRangeOp;
 struct RangeTag
 {
 	bool is_left{true};
@@ -247,7 +246,7 @@ struct Piece
 	Piece(Segment *seg)
 		: seg(seg),
 		  data(seg->data.get()),
-		  len(utf8::distance(data, data + strlen(data))),
+		  len(seg->len),
 		  seg_pos(0) {}
 
 	bool isRemoved() const
@@ -265,11 +264,6 @@ struct Piece
 		return data < other.data;
 	}
 };
-
-size_t Segment::len() const
-{
-	return last_piece->seg_pos + last_piece->len;
-}
 
 template <uint8_t N>
 class PieceTree : public Sequence<PieceInfo, Piece, N>
@@ -773,7 +767,7 @@ protected:
 		{
 			auto *stored_op = storeOp<StoredDeletion>(target->replica, target->stamp);
 			auto begin = StoredAnchor(target, 0);
-			auto end = StoredAnchor(target, target->len() - 1);
+			auto end = StoredAnchor(target, target->len - 1);
 			auto [left, right] = deletions.apply(
 				RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
 			auto [left_it, left_piece] = left;
