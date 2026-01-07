@@ -3,28 +3,26 @@
 #include <string>
 #include <utility>
 
+#include <stack>
+#include <vector>
+
 #include "piecetree.hpp"
-
-using FrontLine = std::vector<std::pair<ReplicaID, uint32_t>>;
-
-struct Range
-{
-	Anchor begin;
-	Anchor end;
-};
 
 class PlainText
 {
+private:
+	PieceCRDT doc;
+	std::stack<uint32_t> undo_stack;
+	std::stack<uint32_t> redo_stack;
+
 public:
-	class Iterator
-	{
-	};
+	using Iterator = PieceCRDT::Iterator;
 
 	PlainText();
 
 	// basic information
 	size_t size() const;
-	size_t rowSize() const;
+	// size_t rowSize() const;
 	bool empty() const;
 
 	// export
@@ -50,19 +48,25 @@ public:
 	// index conversion
 	Anchor toAnchor(size_t pos) const;
 	// Anchor toAnchor(size_t row, size_t column) const;
-	// size_t toOffset(size_t row, size_t column) const;
-	size_t toOffset(const Anchor &anchor) const;
+	// size_t toPos(size_t row, size_t column) const;
+	size_t toPos(const Anchor &anchor) const;
 
 	// undo/redo, only undo/redo local user's operations
+	// the operation created WONT be recorded in undo/redo stack
 	bool canUndo() const;
 	bool canRedo() const;
 	void undo();
 	void redo();
 
+	// undo/redo specific operation, other user's operations included
+	// the operation created WILL be recorded in undo/redo stack
+	size_t undoSpecific(OperationID opID);
+	size_t redoSpecific(OperationID opID);
+
 	// remote operations
 	ReplicaID replicaID() const;
 	void apply(const Operation &op);
 	void apply(const std::vector<Operation> &ops);
-	FrontLine frontline();
-	std::vector<Operation> diff(const FrontLine &frontline = FrontLine()); // return operations ahead of the given frontline
+	std::vector<OperationID> frontline();
+	std::vector<Operation> diff(const std::vector<OperationID> &frontline = {}); // return operations ahead of the given frontline
 };

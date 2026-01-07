@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <algorithm>
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -166,6 +167,11 @@ public:
 class PieceCRDTValidator : public PieceCRDT
 {
 public:
+	auto historyAnchor(size_t pos)
+	{
+		return piece_tree.historyAnchor(pos);
+	}
+
 	bool validate()
 	{
 		std::string total_str;
@@ -181,7 +187,7 @@ public:
 		//
 		for (const auto &replica : replicas)
 		{
-			for (const auto &op : replica.segments)
+			for (const auto &op : replica.operations)
 			{
 				if (op && op->type == OperationType::Delete)
 				{

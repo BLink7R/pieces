@@ -1,0 +1,215 @@
+#include "text.hpp"
+
+PlainText::PlainText() = default;
+
+size_t PlainText::size() const { return doc.size(); }
+
+bool PlainText::empty() const { return doc.size() == 0; }
+
+std::string PlainText::toString() const { return doc.toString(); }
+
+std::string PlainText::slice(size_t begin, size_t end) const
+{
+	std::string s = doc.toString();
+	if (begin >= s.size())
+		return "";
+	if (end > s.size())
+		end = s.size();
+	return s.substr(begin, end - begin);
+}
+
+std::string PlainText::slice(const Anchor &begin, const Anchor &end) const
+{
+	size_t b = toPos(begin);
+	size_t e = toPos(end);
+	if (b > e)
+		return "";
+	return slice(b, e);
+}
+
+PlainText::Iterator PlainText::begin()
+{
+	return doc.begin();
+}
+
+PlainText::Iterator PlainText::end()
+{
+	return doc.end();
+}
+
+PlainText::Iterator PlainText::find(size_t pos)
+{
+	size_t current = 0;
+	auto it = begin();
+	auto endIt = end();
+	while (it != endIt)
+	{
+		if (it->isRemoved())
+		{
+			++it;
+			continue;
+		}
+		if (current + it->len > pos)
+			return it;
+		current += it->len;
+		++it;
+	}
+	return endIt;
+}
+
+PlainText::Iterator PlainText::find(const Anchor &anchor)
+{
+	auto it = begin();
+	auto endIt = end();
+	for (; it != endIt; ++it)
+	{
+		if (it->seg && it->seg->replica->id == anchor.replica && it->seg->stamp == anchor.stamp)
+		{
+			if (anchor.pos >= it->seg_pos && anchor.pos < it->seg_pos + it->len)
+			{
+				return it;
+			}
+		}
+	}
+	return endIt;
+}
+
+size_t PlainText::insert(size_t pos, const std::string &text)
+{
+	Anchor anchor = toAnchor(pos);
+	return insert(anchor, text);
+}
+
+size_t PlainText::insert(const Anchor &anchor, const std::string &text)
+{
+	Insertion op(doc.id(), doc.stamp(), anchor, text);
+	doc.insert(op);
+	undo_stack.push(op.stamp);
+	return op.stamp;
+}
+
+size_t PlainText::del(size_t begin, size_t end)
+{
+	Anchor anchorBegin = toAnchor(begin);
+	Anchor anchorEnd = toAnchor(end);
+	return del(anchorBegin, anchorEnd);
+}
+
+size_t PlainText::del(const Anchor &begin, const Anchor &end)
+{
+	Deletion op(doc.id(), doc.stamp(), begin, end);
+	doc.del(op);
+	undo_stack.push(op.stamp);
+	return op.stamp;
+}
+
+Anchor PlainText::toAnchor(size_t pos) const
+{
+	return const_cast<PieceCRDT &>(doc).anchor(pos);
+}
+
+size_t PlainText::toPos(const Anchor &anchor) const
+{
+	size_t offset = 0;
+	auto &mutable_doc = const_cast<PieceCRDT &>(doc);
+	for (auto it = mutable_doc.begin(); it != mutable_doc.end(); ++it)
+	{
+		if (it->isRemoved())
+			continue;
+		if (it->seg && it->seg->replica->id == anchor.replica && it->seg->stamp == anchor.stamp)
+		{
+			if (anchor.pos >= it->seg_pos && anchor.pos < it->seg_pos + it->len)
+			{
+				return offset + (anchor.pos - it->seg_pos);
+			}
+		}
+		offset += it->len;
+	}
+	return offset;
+}
+
+bool PlainText::canUndo() const { return !undo_stack.empty(); }
+
+bool PlainText::canRedo() const { return !redo_stack.empty(); }
+
+void PlainText::undo()
+{
+	if (undo_stack.empty())
+		return;
+	uint32_t target = undo_stack.top();
+	undo_stack.pop();
+
+	UndoOperation op(doc.id(), doc.stamp(), OperationID{doc.id(), target});
+	doc.undo(op);
+	redo_stack.push(target);
+}
+
+void PlainText::redo()
+{
+	if (redo_stack.empty())
+		return;
+	uint32_t target = redo_stack.top();
+	redo_stack.pop();
+
+	RedoOperation op(doc.id(), doc.stamp(), OperationID{doc.id(), target});
+	doc.redo(op);
+	undo_stack.push(target);
+}
+
+size_t PlainText::undoSpecific(OperationID opID)
+{
+    UndoOperation op(doc.id(), doc.stamp(), opID);
+	doc.undo(op);
+	undo_stack.push(opID.stamp);
+    return op.stamp;
+}
+
+size_t PlainText::redoSpecific(OperationID opID)
+{
+    RedoOperation op(doc.id(), doc.stamp(), opID);
+	doc.redo(op);
+	undo_stack.push(opID.stamp);
+    return op.stamp;
+}
+
+
+ReplicaID PlainText::replicaID() const { return doc.id(); }
+
+void PlainText::apply(const Operation &op)
+{
+	switch (op.type)
+	{
+	case OperationType::Insert:
+		doc.insert(static_cast<const Insertion &>(op));
+		break;
+	case OperationType::Delete:
+		doc.del(static_cast<const Deletion &>(op));
+		break;
+	case OperationType::Undo:
+		doc.undo(static_cast<const UndoOperation &>(op));
+		break;
+	case OperationType::Redo:
+		doc.redo(static_cast<const RedoOperation &>(op));
+		break;
+	default:
+		break;
+	}
+}
+
+void PlainText::apply(const std::vector<Operation> &ops)
+{
+	for (const auto &op : ops)
+	{
+		apply(op);
+	}
+}
+
+std::vector<OperationID> PlainText::frontline()
+{
+	return doc.frontline();
+}
+
+std::vector<Operation> PlainText::diff(const std::vector<OperationID> &frontline)
+{
+	return doc.diff(frontline);
+}

@@ -50,6 +50,12 @@ struct Anchor
 	ReplicaID replica{};
 	uint32_t stamp{0};
 	size_t pos{0};
+
+	Anchor(ReplicaID replica = {}, uint32_t stamp = 0, size_t pos = 0)
+		: replica(replica), stamp(stamp), pos(pos) {}
+
+	Anchor(OperationID opID, size_t pos = 0)
+		: replica(opID.replica), stamp(opID.stamp), pos(pos) {}
 };
 
 struct Insertion : public Operation

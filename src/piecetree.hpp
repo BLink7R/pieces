@@ -25,7 +25,8 @@ struct StoredDeletion;
 struct Replica
 {
 	ReplicaID id{};
-	mutable std::vector<std::unique_ptr<StoredOperation>> segments; // created segments
+	// TODO: not correct, need virtual deconstructor
+	mutable std::vector<std::unique_ptr<StoredOperation>> operations; // created segments
 
 	bool operator<(const Replica &other) const
 	{
@@ -52,6 +53,11 @@ struct StoredOperation
 		if (stamp != other.stamp)
 			return stamp < other.stamp;
 		return replica->id < other.replica->id;
+	}
+
+	OperationID operationID() const
+	{
+		return OperationID{replica->id, stamp};
 	}
 };
 
@@ -140,6 +146,15 @@ struct StoredAnchor
 	bool operator!=(const StoredAnchor &other) const
 	{
 		return seg != other.seg || pos != other.pos;
+	}
+
+	Anchor toAnchor() const
+	{
+		Anchor anchor;
+		anchor.replica = seg->replica->id;
+		anchor.stamp = seg->stamp;
+		anchor.pos = pos;
+		return anchor;
 	}
 };
 
@@ -344,10 +359,10 @@ public:
 		return anchor;
 	}
 
-	size_t historyOffset(const StoredAnchor &anchor)
+	size_t historyPos(const StoredAnchor &anchor)
 	{
 		Iterator it = find(anchor);
-		return anchor.pos + it.position().total - it->seg_pos;
+		return it.position().total + (anchor.pos - it->seg_pos);
 	}
 
 	Iterator insert(Segment *segment)
@@ -470,7 +485,7 @@ protected:
 			}
 			else
 			{
-				size_t a_pos = piece_tree.historyOffset(a.anchor);
+				size_t a_pos = piece_tree.historyPos(a.anchor);
 				if (a_pos != history_pos)
 					return a_pos < history_pos;
 			}
@@ -502,6 +517,8 @@ protected:
 	RangeTree<bool, 4> deletions;
 
 public:
+	using Iterator = typename PieceTree<4>::Iterator;
+
 	PieceCRDT()
 		: lamport_stamp(0),
 		  generator(std::random_device{}()),
@@ -515,6 +532,11 @@ public:
 	const ReplicaID id() const
 	{
 		return local_id;
+	}
+
+	uint32_t stamp() const
+	{
+		return lamport_stamp + 1;
 	}
 
 	auto begin()
@@ -551,9 +573,82 @@ public:
 		return piece_tree.anchor(pos);
 	}
 
-	auto historyAnchor(size_t pos)
+	size_t pos(const Anchor &anchor)
 	{
-		return piece_tree.historyAnchor(pos);
+		auto it = piece_tree.find(toStored(anchor));
+		// it.position().visible is the start of the piece, add the pos within the piece
+		return it.position().visible + (anchor.pos - it->seg_pos);
+	}
+
+	std::vector<OperationID> frontline() const
+	{
+		std::vector<OperationID> res;
+		for (const auto &replica : replicas)
+		{
+			if (!replica.operations.empty())
+				res.push_back({replica.id, static_cast<uint32_t>(replica.operations.size() - 1)});
+		}
+		return res;
+	}
+
+	std::vector<Operation> diff(const std::vector<OperationID> &frontline) const
+	{
+		std::vector<Operation> res;
+		for (const auto &replica : replicas)
+		{
+			uint32_t start_stamp = 1; // start from 1, as 0 is initial EOF segment
+			for (const auto &opID : frontline)
+			{
+				if (opID.replica == replica.id)
+				{
+					start_stamp = opID.stamp + 1;
+					break;
+				}
+			}
+
+			for (size_t i = start_stamp; i < replica.operations.size(); ++i)
+			{
+				const auto *stored = replica.operations[i].get();
+				if (!stored)
+					continue;
+
+				switch (stored->type)
+				{
+				case OperationType::Insert:
+				{
+					const auto *seg = static_cast<const Segment *>(stored);
+					assert(seg->parent != nullptr);
+					const auto *parent = seg->parent;
+					Anchor anchor(parent->operationID(), seg->insert_pos);
+					res.push_back(Insertion(replica.id, i, anchor, std::string(seg->data.get())));
+					break;
+				}
+				case OperationType::Delete:
+				{
+					const auto *del = static_cast<const StoredDeletion *>(stored);
+					StoredAnchor left_anchor = del->left->anchor;
+					StoredAnchor right_anchor = del->right->anchor;
+					res.push_back(Deletion(replica.id, i, left_anchor.toAnchor(), right_anchor.toAnchor()));
+					break;
+				}
+				case OperationType::Undo:
+				{
+					const auto *undo = static_cast<const StoredUndo *>(stored);
+					res.push_back(UndoOperation(replica.id, i, undo->target->operationID()));
+					break;
+				}
+				case OperationType::Redo:
+				{
+					const auto *redo = static_cast<const StoredRedo *>(stored);
+					res.push_back(RedoOperation(replica.id, i, redo->target->operationID()));
+					break;
+				}
+				default:
+					break;
+				}
+			}
+		}
+		return res;
 	}
 
 	void insert(const Insertion &op)
@@ -635,9 +730,9 @@ public:
 		auto replica_it = replicas.find(op.target.replica);
 		if (replica_it == replicas.end())
 			return;
-		if (replica_it->segments.size() <= op.target.stamp)
+		if (replica_it->operations.size() <= op.target.stamp)
 			return;
-		StoredOperation *target = replica_it->segments[op.target.stamp].get();
+		StoredOperation *target = replica_it->operations[op.target.stamp].get();
 		if (target->has_undo)
 			return;
 		if (target->type == OperationType::Undo)
@@ -661,9 +756,9 @@ public:
 		auto replica_it = replicas.find(op.target.replica);
 		if (replica_it == replicas.end())
 			return;
-		if (replica_it->segments.size() <= op.target.stamp)
+		if (replica_it->operations.size() <= op.target.stamp)
 			return;
-		StoredOperation *target = replica_it->segments[op.target.stamp].get();
+		StoredOperation *target = replica_it->operations[op.target.stamp].get();
 		if (!target->has_undo)
 			return;
 		if (target->type == OperationType::Undo)
@@ -1000,10 +1095,10 @@ protected:
 			return StoredAnchor();
 
 		auto replica = replica_it;
-		if (anchor.stamp >= replica->segments.size())
+		if (anchor.stamp >= replica->operations.size())
 			return StoredAnchor();
 
-		auto &seg_ptr = replica->segments[anchor.stamp];
+		auto &seg_ptr = replica->operations[anchor.stamp];
 		if (!seg_ptr || seg_ptr->type != OperationType::Insert)
 			return StoredAnchor();
 
@@ -1023,11 +1118,11 @@ protected:
 	{
 		lamport_stamp = std::max(lamport_stamp, stamp) + 1;
 
-		replica->segments.resize(lamport_stamp);
+		replica->operations.resize(lamport_stamp);
 		assert(replica->segments[stamp] == nullptr);
-		replica->segments[stamp] = std::make_unique<T>(std::forward<Args>(args)...);
+		replica->operations[stamp] = std::make_unique<T>(std::forward<Args>(args)...);
 
-		T *op = static_cast<T *>(replica->segments[stamp].get());
+		T *op = static_cast<T *>(replica->operations[stamp].get());
 		op->replica = replica;
 		op->stamp = stamp;
 		return op;

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pieces CodeMirror Demo</title>
+    <style>
+      body { margin: 0; padding: 20px; font-family: sans-serif; }
+      #editor { border: 1px solid #ccc; height: 400px; }
+      .controls { margin-bottom: 10px; }
+    </style>
+  </head>
+  <body>
+    <h1>Pieces + CodeMirror CRDT Demo</h1>
+    <div class="controls">
+      <button id="sync-btn">Simulate Remote Sync</button>
+      <span id="status">Loading WASM...</span>
+    </div>
+    <div id="editor"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
