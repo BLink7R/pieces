@@ -523,7 +523,7 @@ public:
 		: lamport_stamp(0),
 		  generator(std::random_device{}()),
 		  local_id(uuids::uuid_random_generator(generator)()),
-		  piece_tree(storeOp<Segment>(local_id, 0, "EOF"))
+		  piece_tree(storeOp<Segment>(ReplicaID(), 0, std::string(1, 0)))
 	{
 	}
 
@@ -1123,7 +1123,7 @@ protected:
 		lamport_stamp = std::max(lamport_stamp, stamp) + 1;
 
 		replica->operations.resize(lamport_stamp);
-		assert(replica->segments[stamp] == nullptr);
+		assert(replica->operations[stamp] == nullptr);
 		replica->operations[stamp] = std::make_unique<T>(std::forward<Args>(args)...);
 
 		T *op = static_cast<T *>(replica->operations[stamp].get());

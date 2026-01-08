@@ -8,6 +8,7 @@
 
 #include "piecetree.hpp"
 
+// TODO: check index is valid
 class PlainText
 {
 private:

@@ -12,6 +12,7 @@
 
 #include "piecetree.hpp"
 #include "simpletext.hpp"
+#include "text.hpp"
 
 std::string generateTestString(int index)
 {
@@ -511,6 +512,8 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 
 int main(int argn, char **argv)
 {
+	PlainText text;
+	text.insert(1, "aaa");
 	// coverTest();
 	// runInsertDeleteTest(1000, 30, 40);
 	// runDeleteUndoRedoTest(200, 5000);

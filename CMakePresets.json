@@ -2,30 +2,48 @@
   "version": 3,
   "configurePresets": [
     {
-      "name": "windows-base",
+      "name": "base",
       "hidden": true,
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/${presetName}",
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "debug",
+      "hidden": true,
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "release",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
       }
     },
     {
       "name": "x64-windows",
       "displayName": "x64 Windows",
       "description": "Build for Windows x64 using vcpkg",
-      "inherits": "windows-base",
+      "inherits": [
+        "base",
+        "debug"
+      ],
       "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-windows"
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl"
       }
     },
     {
       "name": "wasm",
       "displayName": "WebAssembly (Emscripten)",
       "description": "Build for WebAssembly using Emscripten and vcpkg",
-      "inherits": "windows-base",
+      "inherits": [
+        "base",
+        "release"
+      ],
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
         "VCPKG_TARGET_TRIPLET": "wasm32-emscripten"
       }
     }
