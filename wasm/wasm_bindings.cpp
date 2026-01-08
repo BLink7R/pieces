@@ -22,9 +22,10 @@ void applyHelper(PlainText &self, const val &opVal)
 		}
 		return;
     }
-	// Need to detect type and dispatch
-	int type = opVal["type"].as<int>();
-	switch (static_cast<OperationType>(type))
+    
+	OperationType type = opVal["type"].as<OperationType>();
+    val::global("console").call<void>("log", std::string("apply type: ") + std::to_string(static_cast<int>(type)));
+	switch (type)
 	{
 	case OperationType::Insert:
 		self.apply(opVal.as<Insertion>()); // Auto-conversion from JS object to Insertion struct

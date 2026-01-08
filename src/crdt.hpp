@@ -44,10 +44,6 @@ struct Operation
 	Operation() = default;
 	Operation(const ReplicaID &replica, uint32_t stamp, OperationType type)
 		: replica(replica), stamp(stamp), type(type) {}
-	// Operation(const Operation &op) = default;
-	// Operation &operator=(const Operation &other) = default;
-	// Operation(Operation &&op) = default;
-	// Operation &operator=(Operation &&other) = default;
 };
 
 struct Anchor
@@ -59,8 +55,13 @@ struct Anchor
 	Anchor(ReplicaID replica = {}, uint32_t stamp = 0, size_t pos = 0)
 		: replica(replica), stamp(stamp), pos(pos) {}
 
-	Anchor(OperationID opID, size_t pos = 0)
+	Anchor(OperationID opID, size_t pos)
 		: replica(opID.replica), stamp(opID.stamp), pos(pos) {}
+
+	bool isNull() const
+	{
+		return replica.is_nil() && stamp == 0;
+	}
 };
 
 struct Insertion : public Operation

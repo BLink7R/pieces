@@ -36,7 +36,8 @@ size_t PlainText::insert(size_t pos, const std::string &text)
 size_t PlainText::insert(const Anchor &anchor, const std::string &text)
 {
 	Insertion op(doc.id(), doc.stamp(), anchor, text);
-	doc.insert(op);
+	if (!doc.insert(op))
+		return 0;
 	undo_stack.push(op.stamp);
 	return op.stamp;
 }
@@ -51,7 +52,8 @@ size_t PlainText::del(size_t begin, size_t end)
 size_t PlainText::del(const Anchor &begin, const Anchor &end)
 {
 	Deletion op(doc.id(), doc.stamp(), begin, end);
-	doc.del(op);
+	if (!doc.del(op))
+		return 0;
 	undo_stack.push(op.stamp);
 	return op.stamp;
 }
@@ -96,50 +98,32 @@ void PlainText::redo()
 
 size_t PlainText::undoSpecific(OperationID opID)
 {
-    UndoOperation op(doc.id(), doc.stamp(), opID);
-	doc.undo(op);
+	UndoOperation op(doc.id(), doc.stamp(), opID);
+	if (!doc.undo(op))
+		return 0;
 	undo_stack.push(opID.stamp);
-    return op.stamp;
+	return op.stamp;
 }
 
 size_t PlainText::redoSpecific(OperationID opID)
 {
-    RedoOperation op(doc.id(), doc.stamp(), opID);
-	doc.redo(op);
+	RedoOperation op(doc.id(), doc.stamp(), opID);
+	if (!doc.redo(op))
+		return 0;
 	undo_stack.push(opID.stamp);
-    return op.stamp;
+	return op.stamp;
 }
-
 
 ReplicaID PlainText::replicaID() const { return doc.id(); }
 
-void PlainText::apply(const Operation &op)
+bool PlainText::apply(const Operation &op)
 {
-	switch (op.type)
-	{
-	case OperationType::Insert:
-		doc.insert(static_cast<const Insertion &>(op));
-		break;
-	case OperationType::Delete:
-		doc.del(static_cast<const Deletion &>(op));
-		break;
-	case OperationType::Undo:
-		doc.undo(static_cast<const UndoOperation &>(op));
-		break;
-	case OperationType::Redo:
-		doc.redo(static_cast<const RedoOperation &>(op));
-		break;
-	default:
-		break;
-	}
+	return doc.apply(op);
 }
 
 void PlainText::apply(const std::vector<std::unique_ptr<Operation>> &ops)
 {
-	for (const auto &op : ops)
-	{
-		apply(*op);
-	}
+	doc.apply(ops);
 }
 
 std::vector<OperationID> PlainText::frontline()

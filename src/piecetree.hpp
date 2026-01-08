@@ -337,7 +337,8 @@ public:
 	Anchor historyAnchor(size_t pos) const
 	{
 		Iterator it = findHistory(pos);
-		assert(it != this->end());
+		if (it.isNull())
+			return Anchor();
 		Segment *seg = it->seg;
 		Anchor anchor;
 		anchor.replica = seg->replica->id;
@@ -349,7 +350,8 @@ public:
 	Anchor anchor(size_t pos) const
 	{
 		Iterator it = find(pos);
-		assert(it != this->end());
+		if (it.isNull())
+			return Anchor();
 		assert(it->tombStone == nullptr);
 		Segment *seg = it->seg;
 		Anchor anchor;
@@ -523,11 +525,22 @@ public:
 		: lamport_stamp(0),
 		  generator(std::random_device{}()),
 		  local_id(uuids::uuid_random_generator(generator)()),
-		  piece_tree(storeOp<Segment>(ReplicaID(), 0, std::string(1, 0)))
+		  piece_tree(storeOp<Segment>(ReplicaID(), 1, std::string(1, 0))) // EOF
 	{
 	}
+	PieceCRDT(const PieceCRDT &) = delete;
+	PieceCRDT &operator=(const PieceCRDT &) = delete;
+	PieceCRDT(PieceCRDT &&) = default;
+	PieceCRDT &operator=(PieceCRDT &&) = delete;
 
 	~PieceCRDT() = default;
+
+	static PieceCRDT fork(const PieceCRDT &other)
+	{
+		PieceCRDT new_crdt;
+		new_crdt.apply(other.diff({}));
+		return new_crdt;
+	}
 
 	const ReplicaID id() const
 	{
@@ -575,7 +588,10 @@ public:
 
 	size_t pos(const Anchor &anchor) const
 	{
-		auto it = piece_tree.find(toStored(anchor));
+		StoredAnchor stored = toStored(anchor);
+		if (stored.seg == nullptr)
+			return std::string::npos;
+		auto it = piece_tree.find(stored);
 		// it.position().visible is the start of the piece, add the pos within the piece
 		return it.position().visible + (anchor.pos - it->seg_pos);
 	}
@@ -585,7 +601,7 @@ public:
 		std::vector<OperationID> res;
 		for (const auto &replica : replicas)
 		{
-			if (!replica.operations.empty())
+			if (!replica.id.is_nil() && !replica.operations.empty())
 				res.push_back({replica.id, static_cast<uint32_t>(replica.operations.size() - 1)});
 		}
 		return res;
@@ -596,12 +612,12 @@ public:
 		std::vector<std::unique_ptr<Operation>> res;
 		for (const auto &replica : replicas)
 		{
-			uint32_t start_stamp = 1; // start from 1, as 0 is initial EOF segment
+			uint32_t start_stamp = 2; // start from 2, as 1 is initial EOF segment
 			for (const auto &opID : frontline)
 			{
 				if (opID.replica == replica.id)
 				{
-					start_stamp = opID.stamp + 1;
+					start_stamp = std::max(start_stamp, opID.stamp + 1);
 					break;
 				}
 			}
@@ -651,22 +667,52 @@ public:
 		return res;
 	}
 
-	void insert(const Insertion &op)
+	void apply(const std::vector<std::unique_ptr<Operation>> &ops)
 	{
-		Segment *segment = storeOp<Segment>(op.replica, op.stamp, op.str);
+		for (const auto &op : ops)
+		{
+			apply(*op);
+		}
+	}
+
+	bool apply(const Operation &op)
+	{
+		switch (op.type)
+		{
+		case OperationType::Insert:
+			return insert(static_cast<const Insertion &>(op));
+		case OperationType::Delete:
+			return del(static_cast<const Deletion &>(op));
+		case OperationType::Undo:
+			return undo(static_cast<const UndoOperation &>(op));
+		case OperationType::Redo:
+			return redo(static_cast<const RedoOperation &>(op));
+		default:
+			return false;
+		}
+	}
+
+	bool insert(const Insertion &op)
+	{
 		auto anchor = toStored(op.anchor);
 		if (anchor.seg == nullptr)
-			return; // invalid anchor
+			return false; // invalid anchor
+
+		Segment *segment = storeOp<Segment>(op.replica, op.stamp, op.str);
 		segment->parent = anchor.seg;
 		segment->insert_pos = anchor.pos;
 		piece_tree.insert(segment);
+		return true;
 	}
 
-	void del(const Deletion &op)
+	bool del(const Deletion &op)
 	{
-		auto *stored_op = storeOp<StoredDeletion>(op.replica, op.stamp);
 		auto begin = toStored(op.begin);
 		auto end = toStored(op.end);
+		if (begin.seg == nullptr || end.seg == nullptr)
+			return false; // invalid anchor
+
+		auto *stored_op = storeOp<StoredDeletion>(op.replica, op.stamp);
 		auto [left, right] = deletions.apply(
 			RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
 
@@ -721,26 +767,26 @@ public:
 				piece->tombStone = op;
 		});
 		piece_tree.update(left_piece, right_piece);
+		return true;
 	}
 
 	// TODO: op is received from other replicas, do we need to transform it?
 	// we need to ensure not undo/redo an undo/redo operation before send it to other replicas
-	void undo(const UndoOperation &op)
+	bool undo(const UndoOperation &op)
 	{
 		auto replica_it = replicas.find(op.target.replica);
 		if (replica_it == replicas.end())
-			return;
+			return false;
 		if (replica_it->operations.size() <= op.target.stamp)
-			return;
+			return false;
 		StoredOperation *target = replica_it->operations[op.target.stamp].get();
 		if (target->has_undo)
-			return;
+			return false;
 		if (target->type == OperationType::Undo)
 		{
 			target->has_undo = true;
 			target = static_cast<StoredUndo *>(target)->target;
-			redo(RedoOperation(op.replica, op.stamp, OperationID{target->replica->id, target->stamp}));
-			return;
+			return redo(RedoOperation(op.replica, op.stamp, OperationID{target->replica->id, target->stamp}));
 		}
 		if (target->type == OperationType::Redo)
 		{
@@ -749,24 +795,24 @@ public:
 		}
 		auto *undo_op = storeOp<StoredUndo>(op.replica, op.stamp, target);
 		undoOp(target);
+		return true;
 	}
 
-	void redo(const RedoOperation &op)
+	bool redo(const RedoOperation &op)
 	{
 		auto replica_it = replicas.find(op.target.replica);
 		if (replica_it == replicas.end())
-			return;
+			return false;
 		if (replica_it->operations.size() <= op.target.stamp)
-			return;
+			return false;
 		StoredOperation *target = replica_it->operations[op.target.stamp].get();
 		if (!target->has_undo)
-			return;
+			return false;
 		if (target->type == OperationType::Undo)
 		{
 			target->has_undo = false;
 			target = static_cast<StoredUndo *>(target)->target;
-			undo(UndoOperation(op.replica, op.stamp, OperationID{target->replica->id, target->stamp}));
-			return;
+			return undo(UndoOperation(op.replica, op.stamp, OperationID{target->replica->id, target->stamp}));
 		}
 		if (target->type == OperationType::Redo)
 		{
@@ -775,6 +821,7 @@ public:
 		}
 		auto *redo_op = storeOp<StoredRedo>(op.replica, op.stamp, target);
 		redoOp(target);
+		return true;
 	}
 
 protected:

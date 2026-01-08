@@ -66,7 +66,7 @@ public:
 
 	// remote operations
 	ReplicaID replicaID() const;
-	void apply(const Operation &op);
+	bool apply(const Operation &op);
 	void apply(const std::vector<std::unique_ptr<Operation>> &ops);
 	std::vector<OperationID> frontline();
 	std::vector<std::unique_ptr<Operation>> diff(const std::vector<OperationID> &frontline = {}); // return operations ahead of the given frontline

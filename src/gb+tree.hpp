@@ -233,6 +233,10 @@ struct PinnedIter
 	PinnedIter(const SentinelNode<L> *ptr)
 		: cell(ptr) {}
 
+	bool isNull() const
+	{
+		return cell.isSpecial();
+	}
 	L *leaf()
 	{
 		return cell->node;

@@ -514,6 +514,7 @@ int main(int argn, char **argv)
 {
 	PlainText text;
 	text.insert(1, "aaa");
+	text.diff();
 	// coverTest();
 	// runInsertDeleteTest(1000, 30, 40);
 	// runDeleteUndoRedoTest(200, 5000);
