@@ -1,11 +1,109 @@
 #include "../src/text.hpp"
 #include <emscripten/bind.h>
+#include <emscripten/val.h>
 
 using namespace emscripten;
 
 // Helpers for property accessors
 namespace
 {
+
+// Helper for Apply
+void applyHelper(PlainText &self, const val &opVal)
+{
+	if (opVal.isNull() || opVal.isUndefined())
+		return;
+	if (opVal.isArray())
+	{
+        unsigned length = opVal["length"].as<unsigned>();
+        for (unsigned i = 0; i < length; ++i)
+        {
+            applyHelper(self, opVal[i]);
+		}
+		return;
+    }
+	// Need to detect type and dispatch
+	int type = opVal["type"].as<int>();
+	switch (static_cast<OperationType>(type))
+	{
+	case OperationType::Insert:
+		self.apply(opVal.as<Insertion>()); // Auto-conversion from JS object to Insertion struct
+		break;
+	case OperationType::Delete:
+		self.apply(opVal.as<Deletion>());
+		break;
+	case OperationType::Undo:
+		self.apply(opVal.as<UndoOperation>());
+		break;
+	case OperationType::Redo:
+		self.apply(opVal.as<RedoOperation>());
+		break;
+	default:
+		break;
+	}
+}
+
+val diffHelper(PlainText &self, const val &frontlineVal)
+{
+	std::vector<OperationID> frontline;
+	if (frontlineVal.isArray())
+	{
+		unsigned length = frontlineVal["length"].as<unsigned>();
+		for (unsigned i = 0; i < length; ++i)
+		{
+			frontline.push_back(frontlineVal[i].as<OperationID>());
+		}
+	}
+	else if (frontlineVal.isUndefined() || frontlineVal.isNull())
+	{
+		// Empty frontline
+	}
+	else
+	{
+		// Output error to JS console
+		val::global("console").call<void>("error", std::string("diffHelper: Invalid frontline argument. Expected Array, null, or undefined."));
+		return val::array();
+	}
+
+	auto ops = self.diff(frontline);
+	val result = val::array();
+	for (const auto &op : ops)
+	{
+		switch (op->type)
+		{
+		case OperationType::Insert:
+			result.call<void>("push", *static_cast<Insertion *>(op.get()));
+			break;
+		case OperationType::Delete:
+			result.call<void>("push", *static_cast<Deletion *>(op.get()));
+			break;
+		case OperationType::Undo:
+			result.call<void>("push", *static_cast<UndoOperation *>(op.get()));
+			break;
+		case OperationType::Redo:
+			result.call<void>("push", *static_cast<RedoOperation *>(op.get()));
+			break;
+		default:
+			// Fallback, maybe shouldn't happen or push partially?
+			// result.call<void>("push", *op); // Base value object not ideal
+			continue;
+		}
+	}
+	return result;
+}
+
+val frontlineHelper(PlainText &self)
+{
+	auto frontline = self.frontline();
+	val result = val::array();
+	for (const auto &opID : frontline)
+	{
+		result.call<void>("push", opID);
+	}
+	return result;
+}
+
+std::string replicaIDHelper(const PlainText &self) { return uuids::to_string(self.replicaID()); }
 
 std::string getOpIDReplica(const OperationID &o) { return uuids::to_string(o.replica); }
 void setOpIDReplica(OperationID &o, const std::string &s)
@@ -48,27 +146,43 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.field("stamp", &Anchor::stamp)
 		.field("pos", &Anchor::pos);
 
-	class_<Operation>("Operation")
-		.property("replica", &getOpReplica, &setOpReplica)
-		.property("stamp", &Operation::stamp)
-		.property("type", &Operation::type);
+	// Note: value_object cannot inherit from other value_objects.
+	// We must flatten the fields from the base Operation class into each derived struct's value_object definition.
+	value_object<Insertion>("Insertion")
+		// Base Operation fields
+		.field("replica", &getOpReplica, &setOpReplica)
+		.field("stamp", &Operation::stamp)
+		.field("type", &Operation::type)
+		// Insertion specific fields
+		.field("anchor", &Insertion::anchor)
+		.field("str", &Insertion::str);
 
-	class_<Insertion, base<Operation>>("Insertion")
-		.property("anchor", &Insertion::anchor)
-		.property("str", &Insertion::str);
+	value_object<Deletion>("Deletion")
+		// Base Operation fields
+		.field("replica", &getOpReplica, &setOpReplica)
+		.field("stamp", &Operation::stamp)
+		.field("type", &Operation::type)
+		// Deletion specific fields
+		.field("begin", &Deletion::begin)
+		.field("end", &Deletion::end);
 
-	class_<Deletion, base<Operation>>("Deletion")
-		.property("begin", &Deletion::begin)
-		.property("end", &Deletion::end);
+	value_object<UndoOperation>("UndoOperation")
+		// Base Operation fields
+		.field("replica", &getOpReplica, &setOpReplica)
+		.field("stamp", &Operation::stamp)
+		.field("type", &Operation::type)
+		// Undo specific fields
+		.field("target", &UndoOperation::target);
 
-	class_<UndoOperation, base<Operation>>("UndoOperation")
-		.property("target", &UndoOperation::target);
-
-	class_<RedoOperation, base<Operation>>("RedoOperation")
-		.property("target", &RedoOperation::target);
+	value_object<RedoOperation>("RedoOperation")
+		// Base Operation fields
+		.field("replica", &getOpReplica, &setOpReplica)
+		.field("stamp", &Operation::stamp)
+		.field("type", &Operation::type)
+		// Redo specific fields
+		.field("target", &RedoOperation::target);
 
 	register_vector<OperationID>("VectorOperationID");
-	register_vector<std::shared_ptr<Operation>>("VectorOperation");
 
 	class_<PlainText>("PlainText")
 		.constructor<>()
@@ -88,10 +202,8 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.function("canRedo", &PlainText::canRedo)
 		.function("undoSpecific", &PlainText::undoSpecific)
 		.function("redoSpecific", &PlainText::redoSpecific)
-		.function("replicaID", &PlainText::replicaID)
-		.function("apply", select_overload<void(const Operation &)>(&PlainText::apply))
-		.function("applyBatch", select_overload<void(const std::vector<Operation> &)>(&PlainText::apply))
-		.function("frontline", &PlainText::frontline)
-		.function("diff", &PlainText::diff)
-		;
+		.function("replicaID", &replicaIDHelper)
+		.function("apply", &applyHelper)
+		.function("frontline", &frontlineHelper)
+		.function("diff", &diffHelper);
 }

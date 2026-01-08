@@ -296,7 +296,7 @@ public:
 		initial_segment->last_piece = &*it;
 	}
 
-	Iterator findHistory(size_t history_pos)
+	Iterator findHistory(size_t history_pos) const
 	{
 		return Base::find(history_pos, [](size_t a, const PieceInfo &b)
 		{
@@ -304,7 +304,7 @@ public:
 		});
 	}
 
-	Iterator find(size_t file_pos)
+	Iterator find(size_t file_pos) const
 	{
 		return Base::find(file_pos, [](size_t a, const PieceInfo &b)
 		{
@@ -312,7 +312,7 @@ public:
 		});
 	}
 
-	Iterator find(const StoredAnchor &anchor)
+	Iterator find(const StoredAnchor &anchor) const
 	{
 		Segment *seg = anchor.seg;
 
@@ -334,7 +334,7 @@ public:
 		return it;
 	}
 
-	Anchor historyAnchor(size_t pos)
+	Anchor historyAnchor(size_t pos) const
 	{
 		Iterator it = findHistory(pos);
 		assert(it != this->end());
@@ -346,7 +346,7 @@ public:
 		return anchor;
 	}
 
-	Anchor anchor(size_t pos)
+	Anchor anchor(size_t pos) const
 	{
 		Iterator it = find(pos);
 		assert(it != this->end());
@@ -359,7 +359,7 @@ public:
 		return anchor;
 	}
 
-	size_t historyPos(const StoredAnchor &anchor)
+	size_t historyPos(const StoredAnchor &anchor) const
 	{
 		Iterator it = find(anchor);
 		return it.position().total + (anchor.pos - it->seg_pos);
@@ -536,15 +536,15 @@ public:
 
 	uint32_t stamp() const
 	{
-		return lamport_stamp + 1;
+		return lamport_stamp;
 	}
 
-	auto begin()
+	auto begin() const
 	{
 		return piece_tree.begin();
 	}
 
-	auto end()
+	auto end() const
 	{
 		return piece_tree.end();
 	}
@@ -568,12 +568,12 @@ public:
 	}
 
 	// anchor at visible position
-	auto anchor(size_t pos)
+	auto anchor(size_t pos) const
 	{
 		return piece_tree.anchor(pos);
 	}
 
-	size_t pos(const Anchor &anchor)
+	size_t pos(const Anchor &anchor) const
 	{
 		auto it = piece_tree.find(toStored(anchor));
 		// it.position().visible is the start of the piece, add the pos within the piece
@@ -591,9 +591,9 @@ public:
 		return res;
 	}
 
-	std::vector<Operation> diff(const std::vector<OperationID> &frontline) const
+	std::vector<std::unique_ptr<Operation>> diff(const std::vector<OperationID> &frontline) const
 	{
-		std::vector<Operation> res;
+		std::vector<std::unique_ptr<Operation>> res;
 		for (const auto &replica : replicas)
 		{
 			uint32_t start_stamp = 1; // start from 1, as 0 is initial EOF segment
@@ -620,7 +620,7 @@ public:
 					assert(seg->parent != nullptr);
 					const auto *parent = seg->parent;
 					Anchor anchor(parent->operationID(), seg->insert_pos);
-					res.push_back(Insertion(replica.id, i, anchor, std::string(seg->data.get())));
+					res.push_back(std::make_unique<Insertion>(replica.id, i, anchor, std::string(seg->data.get())));
 					break;
 				}
 				case OperationType::Delete:
@@ -628,19 +628,19 @@ public:
 					const auto *del = static_cast<const StoredDeletion *>(stored);
 					StoredAnchor left_anchor = del->left->anchor;
 					StoredAnchor right_anchor = del->right->anchor;
-					res.push_back(Deletion(replica.id, i, left_anchor.toAnchor(), right_anchor.toAnchor()));
+					res.push_back(std::make_unique<Deletion>(replica.id, i, left_anchor.toAnchor(), right_anchor.toAnchor()));
 					break;
 				}
 				case OperationType::Undo:
 				{
 					const auto *undo = static_cast<const StoredUndo *>(stored);
-					res.push_back(UndoOperation(replica.id, i, undo->target->operationID()));
+					res.push_back(std::make_unique<UndoOperation>(replica.id, i, undo->target->operationID()));
 					break;
 				}
 				case OperationType::Redo:
 				{
 					const auto *redo = static_cast<const StoredRedo *>(stored);
-					res.push_back(RedoOperation(replica.id, i, redo->target->operationID()));
+					res.push_back(std::make_unique<RedoOperation>(replica.id, i, redo->target->operationID()));
 					break;
 				}
 				default:
@@ -792,6 +792,8 @@ protected:
 		case OperationType::Redo:
 			assert(false && "cannot redo an undo/redo operation directly");
 			break;
+		default:
+			break;
 		}
 	}
 
@@ -808,6 +810,8 @@ protected:
 		case OperationType::Undo:
 		case OperationType::Redo:
 			assert(false && "cannot undo an undo/redo operation directly");
+			break;
+		default:
 			break;
 		}
 	}
@@ -1088,7 +1092,7 @@ protected:
 			return &*replicas.insert(Replica{.id = id});
 		return &*it;
 	}
-	StoredAnchor toStored(const Anchor &anchor)
+	StoredAnchor toStored(const Anchor &anchor) const
 	{
 		auto replica_it = replicas.find(anchor.replica);
 		if (replica_it == replicas.end())

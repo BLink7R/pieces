@@ -31,10 +31,10 @@ public:
 	std::string slice(const Anchor &begin, const Anchor &end) const;
 
 	// query, iterate
-	Iterator begin();
-	Iterator end();
-	Iterator find(size_t pos);
-	Iterator find(const Anchor &anchor);
+	// Iterator begin();
+	// Iterator end();
+	// Iterator find(size_t pos);
+	// Iterator find(const Anchor &anchor);
 	// Iterator find(size_t row, size_t column);
 
 	// edit, return operation stamp
@@ -66,7 +66,7 @@ public:
 	// remote operations
 	ReplicaID replicaID() const;
 	void apply(const Operation &op);
-	void apply(const std::vector<Operation> &ops);
+	void apply(const std::vector<std::unique_ptr<Operation>> &ops);
 	std::vector<OperationID> frontline();
-	std::vector<Operation> diff(const std::vector<OperationID> &frontline = {}); // return operations ahead of the given frontline
+	std::vector<std::unique_ptr<Operation>> diff(const std::vector<OperationID> &frontline = {}); // return operations ahead of the given frontline
 };

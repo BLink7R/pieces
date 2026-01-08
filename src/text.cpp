@@ -27,53 +27,6 @@ std::string PlainText::slice(const Anchor &begin, const Anchor &end) const
 	return slice(b, e);
 }
 
-PlainText::Iterator PlainText::begin()
-{
-	return doc.begin();
-}
-
-PlainText::Iterator PlainText::end()
-{
-	return doc.end();
-}
-
-PlainText::Iterator PlainText::find(size_t pos)
-{
-	size_t current = 0;
-	auto it = begin();
-	auto endIt = end();
-	while (it != endIt)
-	{
-		if (it->isRemoved())
-		{
-			++it;
-			continue;
-		}
-		if (current + it->len > pos)
-			return it;
-		current += it->len;
-		++it;
-	}
-	return endIt;
-}
-
-PlainText::Iterator PlainText::find(const Anchor &anchor)
-{
-	auto it = begin();
-	auto endIt = end();
-	for (; it != endIt; ++it)
-	{
-		if (it->seg && it->seg->replica->id == anchor.replica && it->seg->stamp == anchor.stamp)
-		{
-			if (anchor.pos >= it->seg_pos && anchor.pos < it->seg_pos + it->len)
-			{
-				return it;
-			}
-		}
-	}
-	return endIt;
-}
-
 size_t PlainText::insert(size_t pos, const std::string &text)
 {
 	Anchor anchor = toAnchor(pos);
@@ -105,27 +58,12 @@ size_t PlainText::del(const Anchor &begin, const Anchor &end)
 
 Anchor PlainText::toAnchor(size_t pos) const
 {
-	return const_cast<PieceCRDT &>(doc).anchor(pos);
+	return doc.anchor(pos);
 }
 
 size_t PlainText::toPos(const Anchor &anchor) const
 {
-	size_t offset = 0;
-	auto &mutable_doc = const_cast<PieceCRDT &>(doc);
-	for (auto it = mutable_doc.begin(); it != mutable_doc.end(); ++it)
-	{
-		if (it->isRemoved())
-			continue;
-		if (it->seg && it->seg->replica->id == anchor.replica && it->seg->stamp == anchor.stamp)
-		{
-			if (anchor.pos >= it->seg_pos && anchor.pos < it->seg_pos + it->len)
-			{
-				return offset + (anchor.pos - it->seg_pos);
-			}
-		}
-		offset += it->len;
-	}
-	return offset;
+	return doc.pos(anchor);
 }
 
 bool PlainText::canUndo() const { return !undo_stack.empty(); }
@@ -196,11 +134,11 @@ void PlainText::apply(const Operation &op)
 	}
 }
 
-void PlainText::apply(const std::vector<Operation> &ops)
+void PlainText::apply(const std::vector<std::unique_ptr<Operation>> &ops)
 {
 	for (const auto &op : ops)
 	{
-		apply(op);
+		apply(*op);
 	}
 }
 
@@ -209,7 +147,7 @@ std::vector<OperationID> PlainText::frontline()
 	return doc.frontline();
 }
 
-std::vector<Operation> PlainText::diff(const std::vector<OperationID> &frontline)
+std::vector<std::unique_ptr<Operation>> PlainText::diff(const std::vector<OperationID> &frontline)
 {
 	return doc.diff(frontline);
 }

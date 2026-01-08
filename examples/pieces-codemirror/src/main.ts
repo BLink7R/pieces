@@ -19,6 +19,9 @@ async function init() {
     }
   });
 
+  // @ts-ignore
+  globalThis.pieces = Module;
+
   status.innerText = "WASM Loaded";
 
   const crdt = new Module.PlainText();
