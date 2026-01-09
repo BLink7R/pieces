@@ -26,7 +26,15 @@ struct Replica
 {
 	ReplicaID id{};
 	// TODO: not correct, need virtual deconstructor
+	// TODO: change to map to save space
 	mutable std::vector<std::unique_ptr<StoredOperation>> operations; // created segments
+
+	uint32_t maxStamp() const
+	{
+		if (operations.empty())
+			return 0;
+		return operations.size();
+	}
 
 	bool operator<(const Replica &other) const
 	{
@@ -74,7 +82,7 @@ struct Segment : public StoredOperation
 	size_t len{0};
 	std::unique_ptr<size_t[]> line_breaks{nullptr};
 	size_t line_break_count{0};
-	StoredDeletion *undo_op{nullptr};
+	std::unique_ptr<StoredDeletion> undo_op{nullptr};
 
 	Segment(const std::string &str)
 		: StoredOperation(OperationType::Insert)
@@ -705,6 +713,9 @@ public:
 			return false; // invalid anchor
 
 		Segment *segment = storeOp<Segment>(op.replica, op.stamp, op.str);
+		if (segment == nullptr)
+			return false; // duplicate operation
+
 		segment->parent = anchor.seg;
 		segment->insert_pos = anchor.pos;
 		piece_tree.insert(segment);
@@ -719,6 +730,9 @@ public:
 			return false; // invalid anchor
 
 		auto *stored_op = storeOp<StoredDeletion>(op.replica, op.stamp);
+		if (!stored_op)
+			return false; // duplicate operation
+
 		auto [left, right] = deletions.apply(
 			RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
 
@@ -800,6 +814,8 @@ public:
 			target = static_cast<StoredRedo *>(target)->target;
 		}
 		auto *undo_op = storeOp<StoredUndo>(op.replica, op.stamp, target);
+		if (!undo_op)
+			return false;
 		undoOp(target);
 		return true;
 	}
@@ -826,11 +842,13 @@ public:
 			target = static_cast<StoredRedo *>(target)->target;
 		}
 		auto *redo_op = storeOp<StoredRedo>(op.replica, op.stamp, target);
+		if (!redo_op)
+			return false;
 		redoOp(target);
 		return true;
 	}
 
-protected:
+private:
 	void redoOp(StoredOperation *target)
 	{
 		switch (target->type)
@@ -909,7 +927,7 @@ protected:
 	void redoInsertion(Segment *target)
 	{
 		if (target->undo_op != nullptr)
-			redoDel(target->undo_op);
+			undoDel(target->undo_op.get());
 		target->has_undo = false;
 	}
 
@@ -917,7 +935,10 @@ protected:
 	{
 		if (target->undo_op == nullptr)
 		{
-			auto *stored_op = storeOp<StoredDeletion>(target->replica, target->stamp);
+			auto stored_op = new StoredDeletion();
+			stored_op->replica = target->replica;
+			stored_op->stamp = target->stamp;
+
 			auto begin = StoredAnchor(target, 0);
 			auto end = StoredAnchor(target, target->len - 1);
 			auto [left, right] = deletions.apply(
@@ -927,26 +948,9 @@ protected:
 			stored_op->left = &*left_it;
 			stored_op->right = &*right_it;
 
-			target->undo_op = static_cast<StoredDeletion *>(stored_op);
-
-			redoRangeOp(target->undo_op, [](Piece *piece, StoredRangeOp *op)
-			{
-				if (piece->tombStone == nullptr || *piece->tombStone < *op)
-					piece->tombStone = static_cast<StoredRangeOp *>(op);
-			});
-			piece_tree.update(left_piece, right_piece);
+			target->undo_op.reset(stored_op);
 		}
-		else
-		{
-			auto left_piece = piece_tree.find(target->undo_op->left->anchor);
-			auto right_piece = piece_tree.find(target->undo_op->right->anchor);
-			redoRangeOp(target->undo_op, [](Piece *piece, StoredRangeOp *op)
-			{
-				if (piece->tombStone == nullptr || *piece->tombStone < *op)
-					piece->tombStone = static_cast<StoredRangeOp *>(op);
-			});
-			piece_tree.update(left_piece, right_piece);
-		}
+		redoDel(target->undo_op.get());
 		target->has_undo = true;
 	}
 
@@ -1141,7 +1145,7 @@ protected:
 		{
 			return a.id < b;
 		});
-		if (it == replicas.end())
+		if (it ==  replicas.end() || it->id != id)
 			return &*replicas.insert(Replica{.id = id});
 		return &*it;
 	}
@@ -1173,9 +1177,11 @@ protected:
 		requires std::is_base_of_v<StoredOperation, T>
 	T *storeOp(const Replica *replica, uint32_t stamp, Args &&...args)
 	{
+		if (stamp < replica->maxStamp())
+			return nullptr; // duplicate operation
 		lamport_stamp = std::max(lamport_stamp, stamp) + 1;
 
-		replica->operations.resize(lamport_stamp);
+		replica->operations.resize(stamp + 1);
 		assert(replica->operations[stamp] == nullptr);
 		replica->operations[stamp] = std::make_unique<T>(std::forward<Args>(args)...);
 

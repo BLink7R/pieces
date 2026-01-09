@@ -610,6 +610,7 @@ public:
 		return Iterator(this->last->next.asSpecial());
 	}
 
+	// TODO: distinguish find/lower_bound/upper_bound
 	template <typename T, typename Compare = std::less<>>
 	Iterator find(const T &key, const Compare &cmp = Compare()) const
 	{

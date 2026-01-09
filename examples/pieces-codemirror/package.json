@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "compile": "ninja -C ../../build/wasm && cp ../../build/wasm/wasm/pieces-wasm.mjs public/ && cp ../../build/wasm/wasm/pieces-wasm.wasm public/"
   },
   "dependencies": {
     "@codemirror/commands": "^6.0.0",

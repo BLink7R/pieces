@@ -274,7 +274,8 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	std::mt19937 gen(rd());
 
 	PieceCRDTValidator doc;
-	uint32_t op_stamp = 1;
+	std::cout << "doc id: " << doc.id() << "\n";
+	uint32_t op_stamp = 2;
 
 	// 1. 插入长度为 5000 的初始文本
 	std::string initial = generateRandomString(gen, start_len, start_len);
@@ -282,11 +283,12 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	Insertion ins(doc.id(), op_stamp++, init_anchor, initial);
 	doc.insert(ins);
 
-	std::vector<int> deletion_stamps;
-	deletion_stamps.reserve(numOps);
+	const uint32_t del_stamp = op_stamp++;
+	std::vector<ReplicaID> deletion_ids;
+	deletion_ids.reserve(numOps);
 	for (int i = 0; i < numOps; ++i)
-		deletion_stamps.push_back(op_stamp++);
-	std::shuffle(deletion_stamps.begin(), deletion_stamps.end(), gen);
+		deletion_ids.push_back(uuids::uuid_random_generator(gen)());
+	std::shuffle(deletion_ids.begin(), deletion_ids.end(), gen);
 
 	// 2. 随机进行 200 次删除（每次长度 10-20）
 	for (int i = 0; i < numOps; ++i)
@@ -304,10 +306,10 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 		size_t pos = pos_dist(gen);
 
 		// 在 PieceCRDT 上执行删除
-		std::cout << "Deleting at pos " << pos << " length " << len << " stamp " << deletion_stamps[i] << "\n";
+		std::cout << "Deleting at pos " << pos << " length " << len << " id " << deletion_ids[i] << "\n";
 		Anchor begin = doc.historyAnchor(pos);
 		Anchor end = doc.historyAnchor(pos + len);
-		Deletion del(doc.id(), deletion_stamps[i], begin, end);
+		Deletion del(deletion_ids[i], del_stamp, begin, end);
 		doc.del(del);
 
 		if (!doc.validate())
@@ -318,21 +320,21 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	}
 
 	// 3. 将 200 次删除操作打乱后 undo
-	std::shuffle(deletion_stamps.begin(), deletion_stamps.end(), gen);
-	for (auto &opid : deletion_stamps)
+	std::shuffle(deletion_ids.begin(), deletion_ids.end(), gen);
+	for (auto &opid : deletion_ids)
 	{
 		std::cout << "Undoing operation stamp " << opid << "\n";
-		UndoOperation uop(doc.id(), op_stamp++, OperationID{doc.id(), static_cast<uint32_t>(opid)});
+		UndoOperation uop(doc.id(), op_stamp++, OperationID{opid, del_stamp});
 		doc.undo(uop);
 		doc.validate();
 	}
 
 	// 4. 将 200 次删除操作打乱后 redo
-	std::shuffle(deletion_stamps.begin(), deletion_stamps.end(), gen);
-	for (auto &opid : deletion_stamps)
+	std::shuffle(deletion_ids.begin(), deletion_ids.end(), gen);
+	for (auto &opid : deletion_ids)
 	{
 		std::cout << "Redoing operation stamp " << opid << "\n";
-		RedoOperation rop(doc.id(), op_stamp++, OperationID{doc.id(), static_cast<uint32_t>(opid)});
+		RedoOperation rop(doc.id(), op_stamp++, OperationID{opid, del_stamp});
 		doc.redo(rop);
 		doc.validate();
 	}
@@ -513,12 +515,15 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 int main(int argn, char **argv)
 {
 	PlainText text;
-	text.insert(1, "aaa");
-	text.diff();
+	text.insert(0, "aaa");
+	text.undo();
+	std::cout <<text.toString() << "\n";
+	text.redo();
+	std::cout <<text.toString() << "\n";
 	// coverTest();
 	// runInsertDeleteTest(1000, 30, 40);
 	// runDeleteUndoRedoTest(200, 5000);
-	runHistoryDeleteUndoRedoTest(100, 5000);
+	// runHistoryDeleteUndoRedoTest(100, 5000);
 	// int numInsertions = 5000; // 默认插入次数
 	// if (argn > 1)
 	// {
