@@ -510,10 +510,10 @@ class PieceCRDT
 {
 private:
 	uint32_t lamport_stamp;
-	std::mt19937 generator;
+	const ReplicaID local_id;
+	const ReplicaID origin_id;
 
 protected:
-	const ReplicaID local_id;
 	OrderedSet<Replica, 4> replicas;
 	PieceTree<4> piece_tree;
 	RangeTree<bool, 4> deletions;
@@ -521,10 +521,10 @@ protected:
 public:
 	using Iterator = typename PieceTree<4>::Iterator;
 
-	PieceCRDT()
+	PieceCRDT(const ReplicaID &origin = {})
 		: lamport_stamp(0),
-		  generator(std::random_device{}()),
-		  local_id(uuids::uuid_random_generator(generator)()),
+		  local_id(generateReplicaID()),
+		  origin_id(origin.is_nil() ? local_id : origin),
 		  piece_tree(storeOp<Segment>(ReplicaID(), 1, std::string(1, 0))) // EOF
 	{
 	}
@@ -535,9 +535,10 @@ public:
 
 	~PieceCRDT() = default;
 
+	// TODO: remove this function
 	static PieceCRDT fork(const PieceCRDT &other)
 	{
-		PieceCRDT new_crdt;
+		PieceCRDT new_crdt(other.origin());
 		new_crdt.apply(other.diff({}));
 		return new_crdt;
 	}
@@ -545,6 +546,11 @@ public:
 	const ReplicaID id() const
 	{
 		return local_id;
+	}
+
+	const ReplicaID origin() const
+	{
+		return origin_id;
 	}
 
 	uint32_t stamp() const

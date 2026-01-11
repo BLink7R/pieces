@@ -8,6 +8,12 @@
 // guid
 using ReplicaID = uuids::uuid;
 
+inline ReplicaID generateReplicaID()
+{
+	static thread_local std::mt19937 generator(std::random_device{}());
+	return uuids::uuid_random_generator(generator)();
+}
+
 struct OperationID
 {
 	ReplicaID replica{};
