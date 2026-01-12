@@ -516,10 +516,11 @@ int main(int argn, char **argv)
 {
 	PlainText text;
 	text.insert(0, "aaa");
+	std::cout << text.toString() << "\n";
 	text.undo();
-	std::cout <<text.toString() << "\n";
 	text.redo();
-	std::cout <<text.toString() << "\n";
+	std::cout << text.toString() << "\n";
+	// text.diff();
 	// coverTest();
 	// runInsertDeleteTest(1000, 30, 40);
 	// runDeleteUndoRedoTest(200, 5000);

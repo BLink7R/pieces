@@ -4,7 +4,6 @@
 #include <cassert>
 #include <cstddef>
 #include <memory>
-#include <random>
 #include <tuple>
 #include <unordered_set>
 #include <utf8cpp/utf8.h>
@@ -452,7 +451,7 @@ public:
 	}
 };
 
-template <typename T, uint8_t N>
+template <typename T, RangeInterval RightOpen, uint8_t N>
 class RangeTree : protected OrderedSet<RangeTag, N>
 {
 public:
@@ -465,23 +464,41 @@ public:
 	RangeTree() = default;
 	~RangeTree() = default;
 
+	// should ganrantee left.anchor < right.anchor
 	template <typename PieceTree>
 	auto apply(RangeTag left, RangeTag right, PieceTree &piece_tree)
 	{
 		// left and right can be on the same piece, so we need to split right first
-		auto end = this->addTag(right, piece_tree);
-		auto begin = this->addTag(left, piece_tree);
+		auto end = this->addTag<false>(right, piece_tree);
+		auto begin = this->addTag<true>(left, piece_tree);
 		return std::make_pair(begin, end);
 	}
 
 protected:
-	template <typename PieceTree>
+	template <bool IsLeft, typename PieceTree>
 	auto addTag(RangeTag tag, PieceTree &piece_tree)
 	{
 		auto piece_it = piece_tree.find(tag.anchor);
 		size_t pos = tag.anchor.pos - piece_it->seg_pos;
-		if (pos != 0)
-			piece_it = ++piece_tree.split(piece_it, pos);
+		if constexpr (IsLeft || RightOpen == RangeInterval::Exclusive)
+		{ // normal anchor, anchor.pos is in [0, segment.len)
+			assert(pos < piece_it->len);
+			if (pos != 0)
+				piece_it = ++piece_tree.split(piece_it, pos);
+		}
+		else
+		{ // for right closed anchor, anchor.pos is in (0, segment.len]
+			if (pos == 0)
+			{ // as we always use normal anchor, need to move to previous piece
+				assert(piece_it != piece_tree.begin());
+				--piece_it;
+				tag.anchor.seg = piece_it->seg;
+				tag.anchor.pos = piece_it->seg_pos + piece_it->len;
+				pos = piece_it->len;
+			}
+			else if (pos < piece_it->len)
+				piece_it = ++piece_tree.split(piece_it, pos);
+		}
 
 		size_t history_pos = piece_it.position().total;
 
@@ -524,7 +541,7 @@ private:
 protected:
 	OrderedSet<Replica, 4> replicas;
 	PieceTree<4> piece_tree;
-	RangeTree<bool, 4> deletions;
+	RangeTree<bool, RangeInterval::Inclusive, 4> deletions;
 
 public:
 	using Iterator = typename PieceTree<4>::Iterator;
@@ -708,6 +725,8 @@ public:
 
 	bool insert(const Insertion &op)
 	{
+		if (op.str.empty())
+			return false; // no-op
 		auto anchor = toStored(op.anchor);
 		if (anchor.seg == nullptr)
 			return false; // invalid anchor
@@ -724,6 +743,8 @@ public:
 
 	bool del(const Deletion &op)
 	{
+		if (op.begin == op.end)
+			return false; // no-op
 		auto begin = toStored(op.begin);
 		auto end = toStored(op.end);
 		if (begin.seg == nullptr || end.seg == nullptr)
@@ -940,7 +961,7 @@ private:
 			stored_op->stamp = target->stamp;
 
 			auto begin = StoredAnchor(target, 0);
-			auto end = StoredAnchor(target, target->len - 1);
+			auto end = StoredAnchor(target, target->len);
 			auto [left, right] = deletions.apply(
 				RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
 			auto [left_it, left_piece] = left;

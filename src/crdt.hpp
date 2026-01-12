@@ -64,6 +64,11 @@ struct Anchor
 	Anchor(OperationID opID, size_t pos)
 		: replica(opID.replica), stamp(opID.stamp), pos(pos) {}
 
+	bool operator==(const Anchor &other) const
+	{
+		return replica == other.replica && stamp == other.stamp && pos == other.pos;
+	}
+	
 	bool isNull() const
 	{
 		return replica.is_nil() && stamp == 0;
@@ -78,6 +83,14 @@ struct Insertion : public Operation
 	Insertion() = default;
 	Insertion(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor, std::string text)
 		: Operation(replica, stamp, OperationType::Insert), anchor(anchor), str(std::move(text)) {}
+};
+
+// All ranges are inclusive on the left side, but the right side can be inclusive or exclusive.
+// Inclusive operations: deletion
+enum class RangeInterval : uint8_t
+{
+	Inclusive,
+	Exclusive,
 };
 
 enum class StyleName : uint8_t
