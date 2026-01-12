@@ -1,13 +1,13 @@
 ﻿#include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <fstream>
 #include <iostream>
 #include <random>
 #include <set>
 #include <sstream>
-#include <fstream>
-#include <tuple>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "piecetree.hpp"
@@ -403,7 +403,7 @@ void speedTest(int numInsertions, int minLen = 1, int maxLen = 20)
 	std::cout << "Average time per insertion: " << duration.count() / (double)numInsertions << "ms\n";
 }
 
-void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start_len = 5000)
+void runHistoryDeleteUndoRedoTestFromFile(const std::string &filename, int start_len = 5000)
 {
 	std::cout << "Running delete-undo-redo test from file: " << filename << "...\n";
 
@@ -414,7 +414,8 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 		return;
 	}
 
-	struct FileOp {
+	struct FileOp
+	{
 		char type;
 		size_t pos;
 		size_t len;
@@ -434,22 +435,24 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 		{
 			parts.push_back(segment);
 		}
-		if (parts.empty()) continue;
+		if (parts.empty())
+			continue;
 
 		char type = parts[0][0];
 		if (type == 'D' && parts.size() == 4)
 		{
 			int stamp = std::stoi(parts[3]);
-			if (stamp > max_file_stamp) max_file_stamp = stamp;
-			operations.push_back({ 'D', std::stoul(parts[1]), std::stoul(parts[2]), stamp });
+			if (stamp > max_file_stamp)
+				max_file_stamp = stamp;
+			operations.push_back({'D', std::stoul(parts[1]), std::stoul(parts[2]), stamp});
 		}
 		else if (type == 'U' && parts.size() == 2)
 		{
-			operations.push_back({ 'U', 0, 0, std::stoi(parts[1]) });
+			operations.push_back({'U', 0, 0, std::stoi(parts[1])});
 		}
 		else if (type == 'R' && parts.size() == 2)
 		{
-			operations.push_back({ 'R', 0, 0, std::stoi(parts[1]) });
+			operations.push_back({'R', 0, 0, std::stoi(parts[1])});
 		}
 	}
 
@@ -468,12 +471,12 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 	// 2. 执行文件中的操作
 	for (size_t i = 0; i < operations.size(); ++i)
 	{
-		const auto& op = operations[i];
+		const auto &op = operations[i];
 
 		if (op.type == 'D')
 		{
 			std::cout << "Deleting at pos " << op.pos << " length " << op.len << " stamp " << op.stamp << "\n";
-			
+
 			Anchor begin = doc.historyAnchor(op.pos);
 			Anchor end = doc.historyAnchor(op.pos + op.len);
 			Deletion del(doc.id(), op.stamp, begin, end);
@@ -490,7 +493,7 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 			std::cout << "Undoing operation stamp " << op.stamp << "\n";
 			UndoOperation uop(doc.id(), op_stamp++, OperationID{doc.id(), static_cast<uint32_t>(op.stamp)});
 			doc.undo(uop);
-			
+
 			if (!doc.validate())
 			{
 				std::cout << "Validation failed after undo " << i << "\n";
@@ -502,7 +505,7 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 			std::cout << "Redoing operation stamp " << op.stamp << "\n";
 			RedoOperation rop(doc.id(), op_stamp++, OperationID{doc.id(), static_cast<uint32_t>(op.stamp)});
 			doc.redo(rop);
-			
+
 			if (!doc.validate())
 			{
 				std::cout << "Validation failed after redo " << i << "\n";
@@ -512,19 +515,58 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string& filename, int start
 	}
 }
 
+void oldtagTest()
+{
+	PieceCRDTValidator doc;
+	std::cout << "doc id: " << doc.id() << "\n";
+	uint32_t op_stamp = 2;
+
+	std::string initial("Hello, this is a test string for old tag testing.");
+	Anchor init_anchor = doc.anchor(0);
+	Insertion ins(doc.id(), op_stamp++, init_anchor, initial);
+	doc.insert(ins);
+
+	auto id1 = op_stamp;
+	{
+		Anchor begin = doc.historyAnchor(0);
+		Anchor end = doc.historyAnchor(20);
+		Deletion del1(doc.id(), op_stamp++, begin, end);
+		doc.del(del1);
+	}
+
+	auto id2 = op_stamp;
+	{
+		Anchor begin = doc.historyAnchor(5);
+		Anchor end = doc.historyAnchor(15);
+		Deletion del1(doc.id(), op_stamp++, begin, end);
+		doc.del(del1);
+	}
+
+	UndoOperation uop(doc.id(), op_stamp++, OperationID{doc.id(), id2});
+	doc.undo(uop);
+	doc.validate();
+	UndoOperation uop2(doc.id(), op_stamp++, OperationID{doc.id(), id1});
+	doc.undo(uop2);
+	doc.validate();
+	RedoOperation rop(doc.id(), op_stamp++, OperationID{doc.id(), id2});
+	doc.redo(rop);
+	doc.validate();
+}
+
 int main(int argn, char **argv)
 {
-	PlainText text;
-	text.insert(0, "aaa");
-	std::cout << text.toString() << "\n";
-	text.undo();
-	text.redo();
-	std::cout << text.toString() << "\n";
+	// oldtagTest();
+	// PlainText text;
+	// text.insert(0, "aaa");
+	// std::cout << text.toString() << "\n";
+	// text.undo();
+	// text.redo();
+	// std::cout << text.toString() << "\n";
 	// text.diff();
 	// coverTest();
 	// runInsertDeleteTest(1000, 30, 40);
-	// runDeleteUndoRedoTest(200, 5000);
-	// runHistoryDeleteUndoRedoTest(100, 5000);
+	runDeleteUndoRedoTest(200, 5000);
+	runHistoryDeleteUndoRedoTest(200, 5000);
 	// int numInsertions = 5000; // 默认插入次数
 	// if (argn > 1)
 	// {

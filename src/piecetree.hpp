@@ -50,7 +50,6 @@ struct StoredOperation
 	const Replica *replica{nullptr};
 	uint32_t stamp{0};
 	OperationType type;
-	bool has_undo{false};
 
 	StoredOperation(OperationType type)
 		: type(type) {}
@@ -68,9 +67,24 @@ struct StoredOperation
 	}
 };
 
+struct UndoRedoableOp : public StoredOperation
+{
+	StoredOperation *undoredo{nullptr}; // newest undo/redo operation
+
+	UndoRedoableOp(OperationType type)
+		: StoredOperation(type) {}
+
+	bool hasUndo() const
+	{
+		if (undoredo == nullptr)
+			return false;
+		return undoredo->type == OperationType::Undo;
+	}
+};
+
 // Text is stored in segments. Whenever text is inserted, a new segment is created,
 // and the target segment with the insertion offset is stored, keeping the target unchanged.
-struct Segment : public StoredOperation
+struct Segment : public UndoRedoableOp
 {
 	size_t insert_pos{0};
 	Segment *parent{nullptr};
@@ -84,7 +98,7 @@ struct Segment : public StoredOperation
 	std::unique_ptr<StoredDeletion> undo_op{nullptr};
 
 	Segment(const std::string &str)
-		: StoredOperation(OperationType::Insert)
+		: UndoRedoableOp(OperationType::Insert)
 	{
 		data = std::make_unique<const char[]>(str.size() + 1);
 		memcpy(const_cast<char *>(data.get()), str.c_str(), str.size() + 1);
@@ -184,13 +198,13 @@ struct RangeTag
 		: is_left(is_left), anchor(anchor), cur(cur) {}
 };
 
-struct StoredRangeOp : public StoredOperation
+struct StoredRangeOp : public UndoRedoableOp
 {
 	RangeTag *left{nullptr};
 	RangeTag *right{nullptr};
 
 	StoredRangeOp(OperationType type)
-		: StoredOperation(type) {}
+		: UndoRedoableOp(type) {}
 };
 
 struct StoredDeletion : public StoredRangeOp
@@ -211,19 +225,21 @@ struct StoredFormat : public StoredRangeOp
 		: StoredRangeOp(OperationType::Format), key(key), value(std::move(value)) {}
 };
 
+// Undo/redo operations can not be undone/redone again, undo/redo of them
+// will be transformed to undo/redo of their target operations.
 struct StoredUndo : public StoredOperation
 {
-	StoredOperation *target;
+	UndoRedoableOp *target;
 
-	StoredUndo(StoredOperation *target)
+	StoredUndo(UndoRedoableOp *target)
 		: StoredOperation(OperationType::Undo), target(target) {}
 };
 
 struct StoredRedo : public StoredOperation
 {
-	StoredOperation *target;
+	UndoRedoableOp *target;
 
-	StoredRedo(StoredOperation *target)
+	StoredRedo(UndoRedoableOp *target)
 		: StoredOperation(OperationType::Redo), target(target) {}
 };
 
@@ -756,58 +772,12 @@ public:
 
 		auto [left, right] = deletions.apply(
 			RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
-
 		auto [left_it, left_piece] = left;
-		auto piece_before = left_piece;
-		if (piece_before != piece_tree.begin())
-		{
-			--piece_before;
-			auto op = piece_before->tombStone;
-			assert(op == nullptr || op->right->old.isGood());
-			if (op == nullptr)
-				left_it->old = nullptr;
-			else if (op->right->anchor != begin)
-			{
-				if (*op < *stored_op)
-					left_it->old = op;
-			}
-			else if (op->right->old == nullptr || *op->right->old < *stored_op)
-			{
-				assert(op->right->status == TagStatus::Active && "tombStone should be Active");
-				left_it->old = op->right->old;
-			}
-		}
-
 		auto [right_it, right_piece] = right;
-		auto piece_after = right_piece;
-		if (piece_after != piece_tree.end())
-		{
-			auto op = piece_after->tombStone;
-			assert(op == nullptr || op->left->old.isGood());
-			if (op == nullptr)
-				right_it->old = nullptr;
-			else if (op->left->anchor != end)
-			{
-				if (*op < *stored_op)
-					right_it->old = op;
-			}
-			else if (op->left->old == nullptr || *op->left->old < *stored_op)
-			{
-				assert(op->left->status == TagStatus::Active && "tombStone should be Active");
-				right_it->old = op->left->old;
-			}
-		}
-
 		stored_op->left = &*left_it;
 		stored_op->right = &*right_it;
 
-		// TODO: no need to redo if op is local change.
-		redoRangeOp(stored_op, [](Piece *piece, StoredRangeOp *op)
-		{
-			if (piece->tombStone == nullptr || *piece->tombStone < *op)
-				piece->tombStone = op;
-		});
-		piece_tree.update(left_piece, right_piece);
+		redoDel(stored_op);
 		return true;
 	}
 
@@ -821,23 +791,19 @@ public:
 		if (replica_it->operations.size() <= op.target.stamp)
 			return false;
 		StoredOperation *target = replica_it->operations[op.target.stamp].get();
-		if (target->has_undo)
-			return false;
 		if (target->type == OperationType::Undo)
 		{
-			target->has_undo = true;
 			target = static_cast<StoredUndo *>(target)->target;
 			return redo(RedoOperation(op.replica, op.stamp, OperationID{target->replica->id, target->stamp}));
 		}
 		if (target->type == OperationType::Redo)
 		{
-			target->has_undo = true;
 			target = static_cast<StoredRedo *>(target)->target;
 		}
-		auto *undo_op = storeOp<StoredUndo>(op.replica, op.stamp, target);
+		auto *undo_op = storeOp<StoredUndo>(op.replica, op.stamp, static_cast<UndoRedoableOp *>(target));
 		if (!undo_op)
 			return false;
-		undoOp(target);
+		undoOp(undo_op);
 		return true;
 	}
 
@@ -849,29 +815,28 @@ public:
 		if (replica_it->operations.size() <= op.target.stamp)
 			return false;
 		StoredOperation *target = replica_it->operations[op.target.stamp].get();
-		if (!target->has_undo)
-			return false;
 		if (target->type == OperationType::Undo)
 		{
-			target->has_undo = false;
 			target = static_cast<StoredUndo *>(target)->target;
 			return undo(UndoOperation(op.replica, op.stamp, OperationID{target->replica->id, target->stamp}));
 		}
 		if (target->type == OperationType::Redo)
 		{
-			target->has_undo = false;
 			target = static_cast<StoredRedo *>(target)->target;
 		}
-		auto *redo_op = storeOp<StoredRedo>(op.replica, op.stamp, target);
+		auto *redo_op = storeOp<StoredRedo>(op.replica, op.stamp, static_cast<UndoRedoableOp *>(target));
 		if (!redo_op)
 			return false;
-		redoOp(target);
+		redoOp(redo_op);
 		return true;
 	}
 
 private:
-	void redoOp(StoredOperation *target)
+	void redoOp(StoredRedo *op)
 	{
+		UndoRedoableOp *target = op->target;
+		if (target->undoredo && *op < *target->undoredo)
+			return; // LWW - last write wins
 		switch (target->type)
 		{
 		case OperationType::Insert:
@@ -887,10 +852,14 @@ private:
 		default:
 			break;
 		}
+		target->undoredo = op;
 	}
 
-	void undoOp(StoredOperation *target)
+	void undoOp(StoredUndo *op)
 	{
+		UndoRedoableOp *target = op->target;
+		if (target->undoredo && *op < *target->undoredo)
+			return; // LWW - last write wins
 		switch (target->type)
 		{
 		case OperationType::Insert:
@@ -906,20 +875,62 @@ private:
 		default:
 			break;
 		}
+		target->undoredo = op;
 	}
 
 	void redoDel(StoredDeletion *target)
 	{
+		auto left_piece = piece_tree.find(target->left->anchor);
+		auto right_piece = piece_tree.find(target->right->anchor);
+
+		auto piece_before = left_piece;
+		target->left->old.setBad();
+		if (piece_before != piece_tree.begin())
+		{ // as we split for pos 0, it is sure to enter this
+			--piece_before;
+			auto op = piece_before->tombStone;
+			assert(op == nullptr || op->right->old.isGood());
+			if (op == nullptr)
+				target->left->old = nullptr;
+			else if (op->right->anchor != target->left->anchor)
+			{
+				if (*op < *target)
+					target->left->old = op;
+			}
+			else if (op->right->old == nullptr || *op->right->old < *target)
+			{
+				assert(op->right->status == TagStatus::Active && "tombStone should be Active");
+				target->left->old = op->right->old;
+			}
+		}
+
+		auto piece_after = right_piece;
+		target->right->old.setBad();
+		if (piece_after != piece_tree.end())
+		{ // as we append EOF at init, it is sure to enter this
+			auto op = piece_after->tombStone;
+			assert(op == nullptr || op->left->old.isGood());
+			if (op == nullptr)
+				target->right->old = nullptr;
+			else if (op->left->anchor != target->right->anchor)
+			{
+				if (*op < *target)
+					target->right->old = op;
+			}
+			else if (op->left->old == nullptr || *op->left->old < *target)
+			{
+				assert(op->left->status == TagStatus::Active && "tombStone should be Active");
+				target->right->old = op->left->old;
+			}
+		}
+
 		redoRangeOp(target, [](Piece *piece, StoredRangeOp *op)
 		{
 			if (piece->tombStone == nullptr || *piece->tombStone < *op)
 				piece->tombStone = static_cast<StoredRangeOp *>(op);
 		});
 
-		auto left_piece = piece_tree.find(target->left->anchor);
-		auto right_piece = piece_tree.find(target->right->anchor);
 		piece_tree.update(&*left_piece, &*right_piece);
-		target->has_undo = false;
 	}
 
 	void undoDel(StoredDeletion *target)
@@ -942,14 +953,12 @@ private:
 		auto left_piece = piece_tree.find(target->left->anchor);
 		auto right_piece = piece_tree.find(target->right->anchor);
 		piece_tree.update(&*left_piece, &*right_piece);
-		target->has_undo = true;
 	}
 
 	void redoInsertion(Segment *target)
 	{
 		if (target->undo_op != nullptr)
 			undoDel(target->undo_op.get());
-		target->has_undo = false;
 	}
 
 	void undoInsertion(Segment *target)
@@ -972,7 +981,6 @@ private:
 			target->undo_op.reset(stored_op);
 		}
 		redoDel(target->undo_op.get());
-		target->has_undo = true;
 	}
 
 	// won't update tag->old if it is not nullptr
@@ -980,7 +988,6 @@ private:
 	void redoRangeOp(StoredRangeOp *stored_op, const UpdateFunc &updateFunc)
 	{
 		// TODO: handle left->old and right->old update
-		stored_op->has_undo = false;
 		auto left_it = decltype(deletions)::Iterator(stored_op->left);
 		auto right_it = decltype(deletions)::Iterator(stored_op->right);
 
@@ -1077,7 +1084,6 @@ private:
 	template <typename UpdateFunc>
 	std::vector<StoredRangeOp *> undoRangeOp(StoredRangeOp *stored_op, const UpdateFunc &updateFunc)
 	{
-		stored_op->has_undo = true;
 		auto left_it = decltype(deletions)::Iterator(stored_op->left);
 		auto right_it = decltype(deletions)::Iterator(stored_op->right);
 
@@ -1166,7 +1172,7 @@ private:
 		{
 			return a.id < b;
 		});
-		if (it ==  replicas.end() || it->id != id)
+		if (it == replicas.end() || it->id != id)
 			return &*replicas.insert(Replica{.id = id});
 		return &*it;
 	}

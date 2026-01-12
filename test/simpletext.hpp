@@ -193,7 +193,7 @@ public:
 				{
 					auto *del = static_cast<StoredDeletion *>(op.get());
 					// 如果删除操作已被撤销，则不计入
-					if (del->has_undo)
+					if (del->hasUndo())
 						continue;
 
 					auto &left = del->left->anchor;
