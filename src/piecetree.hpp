@@ -32,7 +32,7 @@ struct Replica
 	{
 		if (operations.empty())
 			return 0;
-		return operations.size();
+		return static_cast<uint32_t>(operations.size());
 	}
 
 	bool operator<(const Replica &other) const
@@ -987,25 +987,27 @@ private:
 	template <typename UpdateFunc>
 	void redoRangeOp(StoredRangeOp *stored_op, const UpdateFunc &updateFunc)
 	{
-		// TODO: handle left->old and right->old update
 		auto left_it = decltype(deletions)::Iterator(stored_op->left);
 		auto right_it = decltype(deletions)::Iterator(stored_op->right);
+
+		auto begin_piece = piece_tree.find(stored_op->left->anchor);
+		auto end_piece = piece_tree.find(stored_op->right->anchor);
+		if (stored_op->right->anchor.pos == stored_op->right->anchor.seg->len)
+		{ // for right closed anchor at the end of segment
+			++end_piece;
+		}
+		for (; begin_piece != end_piece; ++begin_piece)
+		{
+			updateFunc(&*begin_piece, stored_op);
+		}
 
 		bool has_across = false;
 		auto first_across = left_it;
 		auto last_across = right_it;
-		auto begin_piece = piece_tree.find(stored_op->left->anchor);
 		// find and update all acrossing tags
 		auto it = left_it;
-		for (++it;; ++it)
+		for (++it; it != right_it; ++it)
 		{
-			for (; begin_piece->seg != it->anchor.seg || begin_piece->seg_pos != it->anchor.pos; ++begin_piece)
-			{
-				updateFunc(&*begin_piece, stored_op);
-			}
-			if (it == right_it)
-				break;
-
 			RangeTag *tag = &*it;
 			if (tag->status == TagStatus::Undone || tag->status == TagStatus::UnUsed)
 				continue;
@@ -1104,9 +1106,12 @@ private:
 		for (++it;; ++it)
 		{
 			// update piece tree
+			bool right_inclusive = (it->anchor.pos == it->anchor.seg->len);
 			for (; begin_piece->seg != it->anchor.seg || begin_piece->seg_pos != it->anchor.pos; ++begin_piece)
 			{
 				updateFunc(&*begin_piece, newest);
+				if (right_inclusive && begin_piece == it->anchor.seg->last_piece)
+					break;
 			}
 			if (it == right_it)
 				break;
