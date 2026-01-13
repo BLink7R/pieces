@@ -43,7 +43,9 @@ function createEditor(parentElement: HTMLElement, Module: PiecesModule) {
 
   // Initial text with a dynamic ID to distinguish them
   const editorId = ports.length + 1;
-  crdt.insert(0, `Hello CRDT! Editor ${editorId}`);
+  if (editorId === 1) {
+    crdt.insert(0, `Hello CRDT! Editor ${editorId}`);
+  }
 
   let pendingInsert: { from: number; text: string } | null = null;
   let debounceTimer: number | null = null;
@@ -63,6 +65,8 @@ function createEditor(parentElement: HTMLElement, Module: PiecesModule) {
 
   const sync = () => {
     // console.log(`[Editor ${editorId}] Syncing...`);
+    let pulled = false;
+
     for (const port of ports) {
       if (port.id === editorId) continue;
 
@@ -73,15 +77,39 @@ function createEditor(parentElement: HTMLElement, Module: PiecesModule) {
 
       const otherFrontline = port.crdt.frontline();
       const ops = crdt.diff(otherFrontline);
+      console.log(`[Editor ${editorId}] -> Diffed ${ops.length} ops for Editor ${port.id}`);
+      console.log(ops);
 
+      // push
       if (ops.length > 0) {
+        const anchor = port.crdt.toAnchor(port.view.state.selection.main.head);
         port.crdt.apply(ops);
         port.view.dispatch({
           changes: { from: 0, to: port.view.state.doc.length, insert: port.crdt.toString() },
+          selection: { anchor: port.crdt.toOffset(anchor) },
           annotations: [remoteAnnotation.of(true)]
         });
         // console.log(`[Editor ${editorId}]  -> Sent ${ops.length} ops to Editor ${port.id}`);
       }
+
+      // Pull
+      const myFrontline = crdt.frontline();
+      const pullOps = port.crdt.diff(myFrontline);
+      if (pullOps.length > 0) {
+        console.log(`[Editor ${port.id}] -> Diffed ${pullOps.length} ops for Editor ${editorId}`);
+        console.log(pullOps);
+        crdt.apply(pullOps);
+        pulled = true;
+      }
+    }
+
+    if (pulled) {
+      const anchor = crdt.toAnchor(view.state.selection.main.head);
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: crdt.toString() },
+        selection: { anchor: crdt.toOffset(anchor) },
+        annotations: [remoteAnnotation.of(true)]
+      });
     }
   };
 
@@ -146,11 +174,13 @@ function createEditor(parentElement: HTMLElement, Module: PiecesModule) {
       run: () => {
         flush(); // Flush buffer before undo
         console.log(`[Editor ${editorId}] Intercepted Undo`);
+        const anchor = crdt.toAnchor(view.state.selection.main.head);
         crdt.undo();
 
         // Sync new state to CM view
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: crdt.toString() },
+          selection: { anchor: crdt.toOffset(anchor) },
           annotations: [remoteAnnotation.of(true)]
         });
         sync();
@@ -162,9 +192,11 @@ function createEditor(parentElement: HTMLElement, Module: PiecesModule) {
       run: () => {
         flush();
         console.log(`[Editor ${editorId}] Intercepted Redo`);
+        const anchor = crdt.toAnchor(view.state.selection.main.head);
         crdt.redo();
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: crdt.toString() },
+          selection: { anchor: crdt.toOffset(anchor) },
           annotations: [remoteAnnotation.of(true)]
         });
         sync();
@@ -176,9 +208,11 @@ function createEditor(parentElement: HTMLElement, Module: PiecesModule) {
       run: () => {
         flush();
         console.log(`[Editor ${editorId}] Intercepted Redo (Mac)`);
+        const anchor = crdt.toAnchor(view.state.selection.main.head);
         crdt.redo();
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: crdt.toString() },
+          selection: { anchor: crdt.toOffset(anchor) },
           annotations: [remoteAnnotation.of(true)]
         });
         sync();
@@ -213,6 +247,10 @@ function createEditor(parentElement: HTMLElement, Module: PiecesModule) {
 
   const port: Port = { id: editorId, crdt, view, flush };
   ports.push(port);
+
+  if (editorId !== 1) {
+    sync();
+  }
 
   return port;
 }

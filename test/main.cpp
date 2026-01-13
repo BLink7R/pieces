@@ -10,6 +10,7 @@
 #include <tuple>
 #include <vector>
 
+#include "crdt.hpp"
 #include "piecetree.hpp"
 #include "simpletext.hpp"
 #include "text.hpp"
@@ -553,20 +554,52 @@ void oldtagTest()
 	doc.validate();
 }
 
+void insertUndoTest()
+{
+	PlainText text;
+	text.insert(0, "12345");
+	PlainText text2(text.replicaID());
+	text2.apply(text.diff());
+
+	text2.del(0, 5);
+	text.apply(text2.diff(text.frontline()));
+	std::cout << "Text after sync: " << text.toString() << "\n";
+
+	text.insert(0, "aaa");
+	text.undo();
+	text2.apply(text.diff(text2.frontline()));
+	std::cout << "Text after sync: " << text2.toString() << "\n";
+
+	text2.insert(0, "bbb");
+	text2.undo();
+	text2.redo();
+	std::cout << "Text2 after undo: " << text2.toString() << "\n";
+}
+
+void insertOnEdgeTest()
+{
+	PlainText text;
+	text.insert(0, "aaa");
+	text.insert(0, "bbb");
+	Anchor anchor = text.toAnchor(3);
+	text.undo();
+	text.undo();
+	text.apply(Insertion{generateReplicaID(), 10, anchor, "ccc"});
+	std::cout << "Text after insert on edge: " << text.toString() << "\n";
+}
+
 int main(int argn, char **argv)
 {
+	insertOnEdgeTest();
 	// oldtagTest();
-	// PlainText text;
-	// text.insert(0, "aaa");
-	// std::cout << text.toString() << "\n";
-	// text.undo();
+	// insertUndoTest();
 	// text.redo();
 	// std::cout << text.toString() << "\n";
 	// text.diff();
 	// coverTest();
 	// runInsertDeleteTest(1000, 30, 40);
-	runDeleteUndoRedoTest(200, 5000);
-	runHistoryDeleteUndoRedoTest(200, 5000);
+	// runDeleteUndoRedoTest(200, 5000);
+	// runHistoryDeleteUndoRedoTest(200, 5000);
 	// int numInsertions = 5000; // 默认插入次数
 	// if (argn > 1)
 	// {

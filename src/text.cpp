@@ -1,7 +1,5 @@
 #include "text.hpp"
 
-PlainText::PlainText() = default;
-
 size_t PlainText::size() const { return doc.size(); }
 
 bool PlainText::empty() const { return doc.size() == 0; }

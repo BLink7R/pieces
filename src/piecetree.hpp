@@ -189,7 +189,7 @@ enum class TagStatus : uint8_t
 struct RangeTag
 {
 	bool is_left{true};
-	TagStatus status{TagStatus::Active};
+	TagStatus status{TagStatus::Undone};
 	StoredAnchor anchor;
 	StoredRangeOp *cur{nullptr};
 	StatedPtr<StoredRangeOp> old{}; // bad status for unused, nullptr for initial status
@@ -880,14 +880,16 @@ private:
 
 	void redoDel(StoredDeletion *target)
 	{
+		assert(target->left->status == TagStatus::Undone && target->right->status != TagStatus::Undone);
 		auto left_piece = piece_tree.find(target->left->anchor);
 		auto right_piece = piece_tree.find(target->right->anchor);
 
-		auto piece_before = left_piece;
-		target->left->old.setBad();
-		if (piece_before != piece_tree.begin())
-		{ // as we split for pos 0, it is sure to enter this
-			--piece_before;
+		// Update tag->old for left and right boundary pieces by checking first and last pieces
+		// inside the deletion. We do not check pieces outside the deletion range because it
+		// needs to process the right closed anchor case.
+		{
+			auto piece_before = left_piece;
+			target->left->old.setBad();
 			auto op = piece_before->tombStone;
 			assert(op == nullptr || op->right->old.isGood());
 			if (op == nullptr)
@@ -903,11 +905,9 @@ private:
 				target->left->old = op->right->old;
 			}
 		}
-
-		auto piece_after = right_piece;
-		target->right->old.setBad();
-		if (piece_after != piece_tree.end())
-		{ // as we append EOF at init, it is sure to enter this
+		{
+			auto piece_after = right_piece;
+			target->right->old.setBad();
 			auto op = piece_after->tombStone;
 			assert(op == nullptr || op->left->old.isGood());
 			if (op == nullptr)

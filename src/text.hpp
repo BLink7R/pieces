@@ -19,7 +19,9 @@ private:
 public:
 	using Iterator = PieceCRDT::Iterator;
 
-	PlainText();
+	PlainText() = default;
+	PlainText(const ReplicaID &rid)
+		: doc(rid) {}
 
 	// basic information
 	size_t size() const;
@@ -67,7 +69,7 @@ public:
 	// remote operations
 	ReplicaID replicaID() const;
 	ReplicaID origin() const;
-	bool apply(const Operation &op);
+	bool apply(const Operation &op); // applyed operation won't be recorded in undo/redo stack
 	void apply(const std::vector<std::unique_ptr<Operation>> &ops);
 	std::vector<OperationID> frontline();
 	std::vector<std::unique_ptr<Operation>> diff(const std::vector<OperationID> &frontline = {}); // return operations ahead of the given frontline
