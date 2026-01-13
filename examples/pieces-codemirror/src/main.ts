@@ -1,15 +1,31 @@
-import { EditorState, Annotation, Transaction } from "@codemirror/state";
+import { EditorState, Annotation, Transaction, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { defaultKeymap } from "@codemirror/commands";
+import type { PiecesModule, PlainText, OperationID, Anchor, Deletion, Insertion, AnyOperation } from "../public/pieces-wasm.d.ts";
+
 // @ts-ignore
 import createPiecesModule from "../public/pieces-wasm.mjs";
 
+declare global {
+  interface Window {
+    pieces: PiecesModule;
+  }
+}
+
 const remoteAnnotation = Annotation.define<boolean>();
 
-async function init() {
-  const status = document.getElementById("status")!;
-  
+interface Port {
+  id: number;
+  crdt: PlainText;
+  view: EditorView;
+  flush: () => void;
+}
+
+const ports: Port[] = [];
+
+// Helper to load the module once
+async function loadPiecesModule(): Promise<PiecesModule> {
   const Module = await createPiecesModule({
     locateFile: (path: string) => {
       if (path.endsWith(".wasm")) {
@@ -17,86 +33,212 @@ async function init() {
       }
       return path;
     }
-  });
+  }) as PiecesModule;
+  return Module;
+}
 
-  // @ts-ignore
-  globalThis.pieces = Module;
+// Function to create a new editor instance with its own CRDT document
+function createEditor(parentElement: HTMLElement, Module: PiecesModule) {
+  const crdt: PlainText = new Module.PlainText();
 
-  status.innerText = "WASM Loaded";
+  // Initial text with a dynamic ID to distinguish them
+  const editorId = ports.length + 1;
+  crdt.insert(0, `Hello CRDT! Editor ${editorId}`);
 
-  const crdt = new Module.PlainText();
+  let pendingInsert: { from: number; text: string } | null = null;
+  let debounceTimer: number | null = null;
 
-  console.log()
+  const flush = () => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    if (pendingInsert) {
+      console.log(`[Editor ${editorId}] Flushing: "${pendingInsert.text}"`);
+      crdt.insert(pendingInsert.from, pendingInsert.text);
+      pendingInsert = null;
+      sync();
+    }
+  };
 
-  // Initial text
-  crdt.insert(0, "Hello CRDT!");
+  const sync = () => {
+    // console.log(`[Editor ${editorId}] Syncing...`);
+    for (const port of ports) {
+      if (port.id === editorId) continue;
+
+      // Ensure that remote port flushed its own buffer, if any?
+      // Actually, we just want to ensure we don't apply ops if remote is typing.
+      // But typically we force remote to flush before applying OUR ops.
+      port.flush();
+
+      const otherFrontline = port.crdt.frontline();
+      const ops = crdt.diff(otherFrontline);
+
+      if (ops.length > 0) {
+        port.crdt.apply(ops);
+        port.view.dispatch({
+          changes: { from: 0, to: port.view.state.doc.length, insert: port.crdt.toString() },
+          annotations: [remoteAnnotation.of(true)]
+        });
+        // console.log(`[Editor ${editorId}]  -> Sent ${ops.length} ops to Editor ${port.id}`);
+      }
+    }
+  };
 
   const updateListener = EditorView.updateListener.of((update) => {
-    if (update.docChanged) {
-      if (update.transactions.some(tr => tr.annotation(remoteAnnotation))) {
-          return;
+    // 1. Prevent loop
+    if (update.transactions.some(tr => tr.annotation(remoteAnnotation))) {
+      return;
+    }
+
+    // 2. No document changes
+    if (!update.docChanged) {
+      return;
+    }
+
+    update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
+      const len = toA - fromA;
+      const text = inserted.toString();
+
+      // has deletion
+      if (len > 0) {
+        flush();
+        let op: Deletion = {
+          replica: "",
+          stamp: 0,
+          type: Module.OperationType.Delete,
+          begin: crdt.toAnchor(fromA),
+          end: crdt.toAnchor(toA)
+        };
+        crdt.delAnchor(op.begin, op.end);
       }
-      
-      let offset = 0;
-      update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
-          const len = toA - fromA;
-          if (len > 0) {
-              crdt.del(fromA + offset, toA + offset);
-              const op = crdt.getLastOp();
-              console.log("Generated Op (Delete):", op);
-          }
-          if (inserted.length > 0) {
-              crdt.insert(fromA + offset, inserted.toString());
-              const op = crdt.getLastOp();
-              console.log("Generated Op (Insert):", op);
-          }
-          offset += (inserted.length - len);
-      });
+
+      if (text.length > 0) {
+        // Check for contiguity
+        if (pendingInsert && fromA === (pendingInsert.from + pendingInsert.text.length)) {
+          // Keep buffering.
+          pendingInsert.text += text;
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(flush, 500) as unknown as number; // 500ms
+          return;
+        } else {
+          // Flush old, start new.
+          flush();
+          pendingInsert = { from: fromA, text: text };
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            console.log(`[Editor ${editorId}] timeout`);
+            flush();
+          }, 500) as unknown as number;
+          return;
+        }
+      }
+
+      sync();
+    });
+
+  });
+
+  // Custom Keymap to intercept Undo/Redo
+  const customKeymap = keymap.of([
+    {
+      key: "Mod-z",
+      run: () => {
+        flush(); // Flush buffer before undo
+        console.log(`[Editor ${editorId}] Intercepted Undo`);
+        crdt.undo();
+
+        // Sync new state to CM view
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: crdt.toString() },
+          annotations: [remoteAnnotation.of(true)]
+        });
+        sync();
+        return true;
+      }
+    },
+    {
+      key: "Mod-y",
+      run: () => {
+        flush();
+        console.log(`[Editor ${editorId}] Intercepted Redo`);
+        crdt.redo();
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: crdt.toString() },
+          annotations: [remoteAnnotation.of(true)]
+        });
+        sync();
+        return true;
+      }
+    },
+    {
+      key: "Mod-Shift-z",
+      run: () => {
+        flush();
+        console.log(`[Editor ${editorId}] Intercepted Redo (Mac)`);
+        crdt.redo();
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: crdt.toString() },
+          annotations: [remoteAnnotation.of(true)]
+        });
+        sync();
+        return true;
+      }
+    },
+    ...defaultKeymap
+  ]);
+
+  // prevent browser native undo/redo
+  const preventBrowserUndo = EditorView.domEventHandlers({
+    beforeinput(e, view) {
+      if (e.inputType === "historyUndo" || e.inputType === "historyRedo") {
+        console.log(`[Editor ${editorId}] beforeinput: ${e.inputType}`);
+        e.preventDefault();
+        return true;
+      }
+      return false;
     }
   });
 
   const view = new EditorView({
     doc: crdt.toString(),
     extensions: [
+      preventBrowserUndo,
+      Prec.highest(customKeymap),
       basicSetup,
-      keymap.of(defaultKeymap),
       updateListener
     ],
-    parent: document.getElementById("editor")!
+    parent: parentElement
   });
 
-  // Simulate Remote Sync
-  document.getElementById("sync-btn")!.addEventListener("click", () => {
-    const lastOp = crdt.getLastOp();
-    if (lastOp) {
-        console.log("Last Op:", lastOp);
-        try {
-            const op = JSON.parse(lastOp);
-            // Change replica ID to simulate another user
-            op.replica = "00000000-0000-0000-0000-000000000002";
-            op.stamp = op.stamp + 1000 + Math.floor(Math.random() * 1000);
-            
-            if (op.type === "insert") {
-                op.text += " (Copy)";
-            }
-            
-            const newJson = JSON.stringify(op);
-            console.log("Applying remote op:", newJson);
-            crdt.applyOp(newJson);
-            
-            // Sync to CM by replacing content
-            const newDoc = crdt.toString();
-            view.dispatch({
-                changes: { from: 0, to: view.state.doc.length, insert: newDoc },
-                annotations: [remoteAnnotation.of(true)]
-            });
-        } catch (e) {
-            console.error("Error parsing/applying op:", e);
-        }
-    } else {
-        console.log("No ops yet. Type something first.");
-        alert("Type something in the editor first to generate an op, then click this button to replay it as a remote user.");
-    }
+  const port: Port = { id: editorId, crdt, view, flush };
+  ports.push(port);
+
+  return port;
+}
+
+async function init() {
+  const status = document.getElementById("status")!;
+  const editorsContainer = document.getElementById("editors-container")!;
+  const addEditorBtn = document.getElementById("add-editor-btn")!;
+
+  // 1. Load and mount module globally
+  const Module = await loadPiecesModule();
+  window.pieces = Module;
+  status.innerText = "WASM Loaded";
+
+  // 2. Setup the initial editor
+  const firstEditorEl = document.getElementById("editor-1");
+  if (firstEditorEl) {
+    createEditor(firstEditorEl, Module);
+  }
+
+  // 3. Enable "Add Editor" button
+  addEditorBtn.addEventListener("click", () => {
+    const newEditorEl = document.createElement("div");
+    newEditorEl.className = "editor-wrapper";
+    editorsContainer.appendChild(newEditorEl);
+    createEditor(newEditorEl, Module);
   });
 }
 

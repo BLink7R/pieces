@@ -6,17 +6,20 @@
     <title>Pieces CodeMirror Demo</title>
     <style>
       body { margin: 0; padding: 20px; font-family: sans-serif; }
-      #editor { border: 1px solid #ccc; height: 400px; }
+      .editor-wrapper { border: 1px solid #ccc; height: 300px; margin-bottom: 20px; }
       .controls { margin-bottom: 10px; }
     </style>
   </head>
   <body>
     <h1>Pieces + CodeMirror CRDT Demo</h1>
     <div class="controls">
-      <button id="sync-btn">Simulate Remote Sync</button>
+      <button id="add-editor-btn">Add Editor</button>
+      <button id="sync-btn" style="display:none">Simulate Remote Sync</button>
       <span id="status">Loading WASM...</span>
     </div>
-    <div id="editor"></div>
+    <div id="editors-container">
+      <div id="editor-1" class="editor-wrapper"></div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

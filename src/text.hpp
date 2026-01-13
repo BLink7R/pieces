@@ -66,6 +66,7 @@ public:
 
 	// remote operations
 	ReplicaID replicaID() const;
+	ReplicaID origin() const;
 	bool apply(const Operation &op);
 	void apply(const std::vector<std::unique_ptr<Operation>> &ops);
 	std::vector<OperationID> frontline();

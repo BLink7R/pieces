@@ -15,16 +15,16 @@ void applyHelper(PlainText &self, const val &opVal)
 		return;
 	if (opVal.isArray())
 	{
-        unsigned length = opVal["length"].as<unsigned>();
-        for (unsigned i = 0; i < length; ++i)
-        {
-            applyHelper(self, opVal[i]);
+		unsigned length = opVal["length"].as<unsigned>();
+		for (unsigned i = 0; i < length; ++i)
+		{
+			applyHelper(self, opVal[i]);
 		}
 		return;
-    }
-    
+	}
+
 	OperationType type = opVal["type"].as<OperationType>();
-    val::global("console").call<void>("log", std::string("apply type: ") + std::to_string(static_cast<int>(type)));
+	val::global("console").call<void>("log", std::string("apply type: ") + std::to_string(static_cast<int>(type)));
 	switch (type)
 	{
 	case OperationType::Insert:
@@ -105,6 +105,8 @@ val frontlineHelper(PlainText &self)
 }
 
 std::string replicaIDHelper(const PlainText &self) { return uuids::to_string(self.replicaID()); }
+
+std::string originHelper(const PlainText &self) { return uuids::to_string(self.origin()); }
 
 std::string getOpIDReplica(const OperationID &o) { return uuids::to_string(o.replica); }
 void setOpIDReplica(OperationID &o, const std::string &s)
@@ -204,6 +206,7 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.function("undoSpecific", &PlainText::undoSpecific)
 		.function("redoSpecific", &PlainText::redoSpecific)
 		.function("replicaID", &replicaIDHelper)
+		.function("origin", &originHelper)
 		.function("apply", &applyHelper)
 		.function("frontline", &frontlineHelper)
 		.function("diff", &diffHelper);

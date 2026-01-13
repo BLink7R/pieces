@@ -116,6 +116,8 @@ size_t PlainText::redoSpecific(OperationID opID)
 
 ReplicaID PlainText::replicaID() const { return doc.id(); }
 
+ReplicaID PlainText::origin() const { return doc.origin(); }
+
 bool PlainText::apply(const Operation &op)
 {
 	return doc.apply(op);
