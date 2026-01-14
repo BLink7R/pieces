@@ -525,6 +525,7 @@ public:
 		return insertBefore(++it, std::move(value));
 	}
 
+	// update interval [begin, end]
 	void update(Iterator begin, Iterator end)
 	{
 		std::vector<Node *> stack;

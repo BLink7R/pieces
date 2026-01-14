@@ -52,27 +52,60 @@ struct Operation
 		: replica(replica), stamp(stamp), type(type) {}
 };
 
+// Anchor has 2 types: after a character (normal), before a character (reversed).
+// This is represented by the sign of pos:
+// 	pos > 0 - after the character at pos
+// 	pos < 0 - before the character at backward |pos|
+// For example: "abc"
+// pos = 1 -> a]bc (after 'a')
+// pos = -1 -> ab[c (before 'c')
+// pos = 0 is invalid, so it requires that all segments are non-empty.
 struct Anchor
 {
 	ReplicaID replica{};
 	uint32_t stamp{0};
-	size_t pos{0};
+	int32_t pos{0};
 
-	Anchor(ReplicaID replica = {}, uint32_t stamp = 0, size_t pos = 0)
+	Anchor(ReplicaID replica = {}, uint32_t stamp = 0, int32_t pos = 0)
 		: replica(replica), stamp(stamp), pos(pos) {}
 
-	Anchor(OperationID opID, size_t pos)
+	Anchor(OperationID opID, int32_t pos)
 		: replica(opID.replica), stamp(opID.stamp), pos(pos) {}
 
 	bool operator==(const Anchor &other) const
 	{
 		return replica == other.replica && stamp == other.stamp && pos == other.pos;
 	}
-	
+
 	bool isNull() const
 	{
-		return replica.is_nil() && stamp == 0;
+		return pos == 0;
 	}
+
+	bool isReversed() const
+	{
+		return pos < 0;
+	}
+};
+
+struct OpenedRange
+{
+	Anchor begin; // reversed anchor
+	Anchor end;	  // reversed anchor
+
+	OpenedRange() = default;
+	OpenedRange(const Anchor &begin, const Anchor &end)
+		: begin(begin), end(end) {}
+};
+
+struct ClosedRange
+{
+	Anchor begin; // reversed anchor
+	Anchor end;	  // normal anchor
+
+	ClosedRange() = default;
+	ClosedRange(const Anchor &begin, const Anchor &end)
+		: begin(begin), end(end) {}
 };
 
 struct Insertion : public Operation

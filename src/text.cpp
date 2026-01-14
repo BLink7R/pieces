@@ -27,7 +27,7 @@ std::string PlainText::slice(const Anchor &begin, const Anchor &end) const
 
 size_t PlainText::insert(size_t pos, const std::string &text)
 {
-	Anchor anchor = toAnchor(pos);
+	Anchor anchor = doc.insertAnchor(pos);
 	return insert(anchor, text);
 }
 
@@ -42,23 +42,35 @@ size_t PlainText::insert(const Anchor &anchor, const std::string &text)
 
 size_t PlainText::del(size_t begin, size_t end)
 {
-	Anchor anchorBegin = toAnchor(begin);
-	Anchor anchorEnd = toAnchor(end);
-	return del(anchorBegin, anchorEnd);
+	return del(toClosedRange(begin, end));
 }
 
-size_t PlainText::del(const Anchor &begin, const Anchor &end)
+size_t PlainText::del(ClosedRange range)
 {
-	Deletion op(doc.id(), doc.stamp(), begin, end);
+	Deletion op(doc.id(), doc.stamp(), range.begin, range.end);
 	if (!doc.del(op))
 		return 0;
 	undo_stack.push(op.stamp);
 	return op.stamp;
 }
 
+OpenedRange PlainText::toOpenedRange(size_t begin, size_t end) const
+{
+	Anchor anchorBegin = doc.reversedAnchor(begin);
+	Anchor anchorEnd = doc.reversedAnchor(end);
+	return OpenedRange(anchorBegin, anchorEnd);
+}
+
+ClosedRange PlainText::toClosedRange(size_t begin, size_t end) const
+{
+	Anchor anchorBegin = doc.reversedAnchor(begin);
+	Anchor anchorEnd = doc.anchor(end);
+	return ClosedRange(anchorBegin, anchorEnd);
+}
+
 Anchor PlainText::toAnchor(size_t pos) const
 {
-	return doc.anchor(pos);
+	return doc.insertAnchor(pos);
 }
 
 size_t PlainText::toPos(const Anchor &anchor) const

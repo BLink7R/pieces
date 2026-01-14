@@ -10,6 +10,44 @@
 class SimpleText
 {
 public:
+	void insert(size_t pos, const std::string &text)
+	{
+		if (pos > buffer.size())
+			pos = buffer.size();
+		buffer.insert(pos, text);
+	}
+
+	void erase(size_t pos, size_t length)
+	{
+		if (pos >= buffer.size())
+			return;
+		if (pos + length > buffer.size())
+			length = buffer.size() - pos;
+		buffer.erase(pos, length);
+	}
+
+	std::string toString() const
+	{
+		return buffer;
+	}
+
+	size_t size() const
+	{
+		return buffer.size();
+	}
+
+	void clear()
+	{
+		buffer.clear();
+	}
+
+private:
+	std::string buffer;
+};
+
+class SimpleDeferredText
+{
+public:
 	enum class OpType
 	{
 		Insert,

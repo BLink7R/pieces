@@ -46,9 +46,11 @@ public:
 	size_t insert(const Anchor &anchor, const std::string &text);
 	size_t del(size_t begin, size_t end);
 	// size_t del(size_t row_begin, size_t column_begin, size_t row_end, size_t column_end);
-	size_t del(const Anchor &begin, const Anchor &end);
+	size_t del(ClosedRange range);
 
 	// index conversion
+	OpenedRange toOpenedRange(size_t begin, size_t end) const;
+	ClosedRange toClosedRange(size_t begin, size_t end) const;
 	Anchor toAnchor(size_t pos) const;
 	// Anchor toAnchor(size_t row, size_t column) const;
 	// size_t toPos(size_t row, size_t column) const;

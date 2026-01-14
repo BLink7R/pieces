@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <iostream>
 #include <memory>
 #include <tuple>
 #include <unordered_set>
@@ -82,17 +83,50 @@ struct UndoRedoableOp : public StoredOperation
 	}
 };
 
+struct StoredAnchor
+{
+	Segment *seg{nullptr};
+	int32_t pos{0};
+
+	StoredAnchor(Segment *seg = nullptr, int32_t pos = 0)
+		: seg(seg), pos(pos) {}
+
+	bool isNull() const
+	{
+		return pos == 0;
+	}
+
+	bool isReversed() const
+	{
+		return pos < 0;
+	}
+
+	bool operator==(const StoredAnchor &other) const
+	{
+		return seg == other.seg && pos == other.pos;
+	}
+
+	bool operator!=(const StoredAnchor &other) const
+	{
+		return seg != other.seg || pos != other.pos;
+	}
+
+	// return distance to segment start
+	int32_t segPos() const;
+	Anchor toAnchor() const;
+};
+
 // Text is stored in segments. Whenever text is inserted, a new segment is created,
 // and the target segment with the insertion offset is stored, keeping the target unchanged.
+// As user edits are usually small, and we need to implement anchor in 2 directions, we
+// limit the length of segments to INT_MAX. The length of pieces can be much smaller.
 struct Segment : public UndoRedoableOp
 {
-	size_t insert_pos{0};
-	Segment *parent{nullptr};
-	Piece *last_piece{nullptr};
-	Piece *insert_piece{nullptr};
+	StoredAnchor anchor;
+	mutable std::vector<Piece *> split_piece;
 	mutable std::vector<Segment *> split_child; // as segments are usually small, vector is faster
 	std::unique_ptr<const char[]> data{nullptr};
-	size_t len{0};
+	int32_t len{0};
 	std::unique_ptr<size_t[]> line_breaks{nullptr};
 	size_t line_break_count{0};
 	std::unique_ptr<StoredDeletion> undo_op{nullptr};
@@ -135,6 +169,27 @@ struct Segment : public UndoRedoableOp
 	}
 	~Segment() = default;
 
+	auto pieceAt(int32_t position) const;
+	auto insertPiece(Piece *piece);
+
+	auto insertSegment(Segment *segment)
+	{ // TODO: we can change it to std::find if segment is small
+		auto it = std::lower_bound(
+			split_child.begin(), split_child.end(), segment,
+			[](const Segment *a, const Segment *b)
+		{
+			if (a->anchor.segPos() != b->anchor.segPos())
+				return a->anchor.segPos() < b->anchor.segPos();
+			if (a->anchor.pos != b->anchor.pos) // reversed vs normal, normal goes first
+				return a->anchor.pos > b->anchor.pos;
+			if (a->anchor.pos > 0)
+				return *a < *b; // normal: earlier goes first
+			else
+				return *b < *a; // reversed: later goes first
+		});
+		return split_child.insert(it, segment);
+	}
+
 	size_t findLineBreak(size_t utf8_offset) const
 	{
 		if (line_break_count == 0)
@@ -151,33 +206,19 @@ struct Segment : public UndoRedoableOp
 	Segment &operator=(const Segment &other) = delete;
 };
 
-struct StoredAnchor
+inline Anchor StoredAnchor::toAnchor() const
 {
-	Segment *seg{nullptr};
-	size_t pos{0};
+	Anchor anchor;
+	anchor.replica = seg->replica->id;
+	anchor.stamp = seg->stamp;
+	anchor.pos = pos;
+	return anchor;
+}
 
-	StoredAnchor(Segment *seg = nullptr, size_t pos = 0)
-		: seg(seg), pos(pos) {}
-
-	bool operator==(const StoredAnchor &other) const
-	{
-		return seg == other.seg && pos == other.pos;
-	}
-
-	bool operator!=(const StoredAnchor &other) const
-	{
-		return seg != other.seg || pos != other.pos;
-	}
-
-	Anchor toAnchor() const
-	{
-		Anchor anchor;
-		anchor.replica = seg->replica->id;
-		anchor.stamp = seg->stamp;
-		anchor.pos = pos;
-		return anchor;
-	}
-};
+inline int32_t StoredAnchor::segPos() const
+{
+	return pos < 0 ? seg->len + pos : pos;
+}
 
 enum class TagStatus : uint8_t
 {
@@ -276,8 +317,8 @@ struct Piece
 {
 	Segment *seg{nullptr};
 	const char *data{nullptr};
-	size_t len{0};
-	size_t seg_pos{0};
+	uint32_t len{0};
+	uint32_t seg_pos{0};
 	StoredRangeOp *tombStone{nullptr};
 
 	Piece() = default;
@@ -303,6 +344,38 @@ struct Piece
 	}
 };
 
+// if anchor is normal, return the piece before the position
+// if anchor is reversed, return the piece after the position
+inline auto Segment::pieceAt(int32_t pos) const
+{
+	if (pos == 0 || std::abs(pos) > len)
+		return split_piece.end();
+	if (pos > 0)
+		return std::lower_bound(
+			split_piece.begin(), split_piece.end(), pos,
+			[](const Piece *p, size_t position)
+		{
+			return p->seg_pos + p->len < position;
+		});
+	return std::lower_bound(
+		split_piece.begin(), split_piece.end(), len + pos,
+		[](const Piece *p, size_t position)
+	{
+		return p->seg_pos + p->len <= position;
+	});
+}
+
+inline auto Segment::insertPiece(Piece *piece)
+{
+	auto it = std::lower_bound(
+		split_piece.begin(), split_piece.end(), piece,
+		[](const Piece *a, const Piece *b)
+	{
+		return a->seg_pos < b->seg_pos;
+	});
+	return split_piece.insert(it, piece);
+}
+
 template <uint8_t N>
 class PieceTree : public Sequence<PieceInfo, Piece, N>
 {
@@ -316,7 +389,7 @@ public:
 	PieceTree(Segment *initial_segment)
 	{
 		auto it = this->insertBefore(this->end(), Piece(initial_segment));
-		initial_segment->last_piece = &*it;
+		initial_segment->split_piece.push_back(&*it);
 	}
 
 	Iterator findHistory(size_t history_pos) const
@@ -327,6 +400,7 @@ public:
 		});
 	}
 
+	// Finds the piece containing the file position, if pos is at the boundary, return the next piece
 	Iterator find(size_t file_pos) const
 	{
 		return Base::find(file_pos, [](size_t a, const PieceInfo &b)
@@ -335,26 +409,23 @@ public:
 		});
 	}
 
+	Iterator lower_bound(size_t file_pos) const
+	{
+		return Base::find(file_pos, [](size_t a, const PieceInfo &b)
+		{
+			return a <= b.visible;
+		});
+	}
+
+	// if anchor is normal, return the piece before the position
+	// if anchor is reversed, return the piece after the position
 	Iterator find(const StoredAnchor &anchor) const
 	{
 		Segment *seg = anchor.seg;
-
-		auto seg_it = std::lower_bound(
-			seg->split_child.begin(), seg->split_child.end(), anchor.pos,
-			[](const Segment *p, size_t position)
-		{
-			return p->insert_pos <= position;
-		});
-		Piece *piece = seg->last_piece;
-		if (seg_it < seg->split_child.end())
-			piece = (*seg_it)->insert_piece;
-		assert(piece->seg == seg);
-		auto it = Iterator(piece);
-		if (piece->seg_pos <= anchor.pos)
-			return it;
-		it = findHistory(it.position().total + anchor.pos - piece->seg_pos);
-		assert(it->seg == seg);
-		return it;
+		auto piece_it = seg->pieceAt(anchor.pos);
+		if (piece_it == seg->split_piece.end())
+			return this->end();
+		return Iterator(*piece_it);
 	}
 
 	Anchor historyAnchor(size_t pos) const
@@ -370,100 +441,94 @@ public:
 		return anchor;
 	}
 
-	Anchor anchor(size_t pos) const
-	{
-		Iterator it = find(pos);
-		if (it.isNull())
-			return Anchor();
-		assert(it->tombStone == nullptr);
-		Segment *seg = it->seg;
-		Anchor anchor;
-		anchor.replica = seg->replica->id;
-		anchor.stamp = seg->stamp;
-		anchor.pos = pos - it.position().visible + it->seg_pos;
-		return anchor;
-	}
-
 	size_t historyPos(const StoredAnchor &anchor) const
 	{
 		Iterator it = find(anchor);
-		return it.position().total + (anchor.pos - it->seg_pos);
+		if (it == this->end())
+		{
+			Iterator it2 = find(anchor);
+		}
+		return it.position().total + (anchor.segPos() - it->seg_pos);
 	}
 
 	Iterator insert(Segment *segment)
 	{
-		StoredAnchor anchor(segment->parent, segment->insert_pos);
-		Iterator it = find(anchor);
-		size_t pos = anchor.pos - it->seg_pos;
-
-		Segment *parent = segment->parent;
-		auto conflict_it = std::lower_bound(
-			parent->split_child.begin(), parent->split_child.end(), segment,
-			[](const Segment *a, const Segment *b)
-		{
-			if (a->insert_pos != b->insert_pos)
-				return a->insert_pos < b->insert_pos;
-			if (a->stamp != b->stamp)
-				return a->stamp < b->stamp;
-			return a->replica->id < b->replica->id;
-		});
+		StoredAnchor anchor = segment->anchor;
+		Segment *parent = anchor.seg;
+		assert(parent != nullptr);
+		auto piece_it = find(anchor);
+		assert(piece_it != this->end());
+		int32_t pos = static_cast<int32_t>(anchor.segPos() - piece_it->seg_pos);
+		auto conflict_it = parent->insertSegment(segment);
+		Piece new_node(segment);
 		// handle insertion ambiguity
-		if (pos == 0 && parent->split_child.size() > 0)
-		{
-			Piece *left_half = nullptr;
-			if (conflict_it == parent->split_child.begin() || (*(conflict_it - 1))->insert_pos != anchor.pos)
+		if (pos == 0)
+		{ // for reversed anchor
+			Piece *piece = &*piece_it;
+			if (conflict_it + 1 != parent->split_child.end())
 			{
-				if (conflict_it < parent->split_child.end() && (*conflict_it)->insert_pos == anchor.pos)
-				{ // case 1: this piece is before all other segments inserted at this position
-					left_half = (*conflict_it)->insert_piece;
-					it = Iterator(left_half);
-				}
-				else
-				{ // case 2: there has no other segment inserted at this position,
-					--it;
-					left_half = &*it;
+				Segment *after = *(conflict_it + 1);
+				if (after->anchor.pos == anchor.pos) // has conflict
+				{
+					for (; !after->split_child.empty(); after = after->split_child[0])
+					{
+						if (after->split_child[0]->anchor.pos != 0)
+							break;
+					}
+					piece = after->split_piece[0];
 				}
 			}
-			else
-			{ // case 3: there has one piece inserted at this position is before this
-				left_half = (*(conflict_it - 1))->last_piece;
-				it = Iterator(left_half);
+			piece_it = this->insertBefore(Iterator(piece), new_node);
+		}
+		else if (pos == piece_it->len)
+		{ // for normal anchor
+			Piece *piece = &*piece_it;
+			if (conflict_it != parent->split_child.begin())
+			{
+				Segment *before = *(conflict_it - 1);
+				if (before->anchor.pos == anchor.pos) // has conflict
+				{
+					for (; !before->split_child.empty(); before = before->split_child.back())
+					{
+						if (before->split_child.back()->anchor.pos != before->len)
+							break;
+					}
+					piece = before->split_piece.back();
+				}
 			}
+			piece_it = this->insertAfter(Iterator(piece), new_node);
 		}
 		else
 		{
-			it = split(it, pos);
+			piece_it = split(piece_it, pos);
+			piece_it = this->insertBefore(piece_it, new_node);
 		}
-		segment->insert_piece = &*it;
-		parent->split_child.insert(conflict_it, segment);
-
-		Piece new_node(segment);
-		auto new_it = this->insertAfter(it, new_node);
-		segment->last_piece = &*new_it;
-
-		// TODO: get all ranges
-		return new_it;
+		segment->insertPiece(&*piece_it);
+		return piece_it;
 	}
 
-	// return the left part, creates new piece even if pos == 0
-	Iterator split(Iterator it, size_t pos)
+	// return the right part
+	Iterator split(Iterator it, int32_t pos)
 	{
-		assert(pos < it->len);
+		assert(pos > 0 && pos < it->len);
 
 		size_t offset = 0;
 		const char *ptr = it->data;
 		utf8::advance(ptr, pos, ptr + 4 * it->len); // max 4 bytes per utf8 char
 		offset = ptr - it->data;
 
-		// new node is the left part
+		// new node is the right part
 		Piece new_node = *it;
-		new_node.len = pos;
-		it->data += offset;
-		it->seg_pos += pos;
-		it->len -= pos;
+		it->len = pos;
+		new_node.data += offset;
+		new_node.seg_pos += pos;
+		new_node.len -= pos;
 		it.key() = it->size(); // no need to update(), insertBefore() will do it
+		this->update(it, it);
 
-		return this->insertBefore(it, new_node);
+		auto new_it = this->insertAfter(it, new_node);
+		it->seg->insertPiece(&*new_it);
+		return new_it;
 	}
 };
 
@@ -495,25 +560,20 @@ protected:
 	auto addTag(RangeTag tag, PieceTree &piece_tree)
 	{
 		auto piece_it = piece_tree.find(tag.anchor);
-		size_t pos = tag.anchor.pos - piece_it->seg_pos;
+		int32_t pos = tag.anchor.segPos() - piece_it->seg_pos;
 		if constexpr (IsLeft || RightOpen == RangeInterval::Exclusive)
-		{ // normal anchor, anchor.pos is in [0, segment.len)
-			assert(pos < piece_it->len);
-			if (pos != 0)
-				piece_it = ++piece_tree.split(piece_it, pos);
+		{ // reversed anchor, anchor.pos is in [-segment.len, -1]
+			assert(0 < -tag.anchor.pos && tag.anchor.segPos() <= tag.anchor.segPos());
+			if (pos > 0)
+				piece_it = piece_tree.split(piece_it, pos);
 		}
 		else
-		{ // for right closed anchor, anchor.pos is in (0, segment.len]
-			if (pos == 0)
-			{ // as we always use normal anchor, need to move to previous piece
-				assert(piece_it != piece_tree.begin());
-				--piece_it;
-				tag.anchor.seg = piece_it->seg;
-				tag.anchor.pos = piece_it->seg_pos + piece_it->len;
-				pos = piece_it->len;
-			}
-			else if (pos < piece_it->len)
-				piece_it = ++piece_tree.split(piece_it, pos);
+		{ // for right closed anchor, anchor.pos is in [1, segment.len]
+			assert(0 < tag.anchor.pos && tag.anchor.pos <= tag.anchor.seg->len);
+			if (pos == piece_it->len)
+				++piece_it;
+			else
+				piece_it = piece_tree.split(piece_it, pos);
 		}
 
 		size_t history_pos = piece_it.position().total;
@@ -521,17 +581,9 @@ protected:
 		auto it = this->insert(std::move(tag),
 							   [&piece_tree, history_pos](const RangeTag &a, const RangeTag &b)
 		{
-			if (a.anchor.seg == b.anchor.seg)
-			{
-				if (a.anchor.pos != b.anchor.pos)
-					return a.anchor.pos < b.anchor.pos;
-			}
-			else
-			{
-				size_t a_pos = piece_tree.historyPos(a.anchor);
-				if (a_pos != history_pos)
-					return a_pos < history_pos;
-			}
+			size_t a_pos = piece_tree.historyPos(a.anchor);
+			if (a_pos != history_pos)
+				return a_pos < history_pos;
 			// new right tag-----  -----new left tag
 			// old right tag--- |  | ---old left tag
 			//  (prev piece]  | |  | |  [next piece)
@@ -556,7 +608,7 @@ private:
 
 protected:
 	OrderedSet<Replica, 4> replicas;
-	PieceTree<4> piece_tree;
+	mutable PieceTree<4> piece_tree;
 	RangeTree<bool, RangeInterval::Inclusive, 4> deletions;
 
 public:
@@ -620,6 +672,7 @@ public:
 		res.reserve(size());
 		for (auto it = piece_tree.begin(), end_it = --piece_tree.end(); it != end_it; ++it)
 		{
+			// std::cout << std::string(it->data, it->len) << " " << it->isRemoved() << "\n";
 			if (it->isRemoved())
 				continue;
 			res.append(it->data, it->len);
@@ -627,10 +680,68 @@ public:
 		return res;
 	}
 
-	// anchor at visible position
-	auto anchor(size_t pos) const
+	Anchor anchor(size_t pos) const
 	{
-		return piece_tree.anchor(pos);
+		Anchor anchor;
+		if (pos == 0)
+			return anchor;
+		// TODO: here we should use lower_bound
+		auto it = piece_tree.lower_bound(pos);
+		if (it.isNull())
+			return anchor;
+		Segment *seg = it->seg;
+		anchor.replica = seg->replica->id;
+		anchor.stamp = seg->stamp;
+		anchor.pos = pos - it.position().visible + it->seg_pos;
+		return anchor;
+	}
+
+	Anchor reversedAnchor(size_t pos) const
+	{
+		Anchor anchor;
+		auto it = piece_tree.find(pos);
+		if (it.isNull())
+			return anchor;
+		Segment *seg = it->seg;
+		anchor.replica = seg->replica->id;
+		anchor.stamp = seg->stamp;
+		anchor.pos = pos - it.position().visible + it->seg_pos - seg->len;
+		return anchor;
+	}
+
+	// implement the [Fugue](https://arxiv.org/abs/2305.00583) algorithm to solve the interleaving problem.
+	// brief of this algorithm: always attach the insertion to the newer piece at left/right.
+	Anchor insertAnchor(size_t pos) const
+	{
+		auto it = piece_tree.find(pos);
+		Anchor anchor;
+		if (pos > 0 && pos == it.position().visible)
+		{ // as begining of the piece
+			Segment *seg_right = it->seg;
+			auto it_before = it;
+			--it_before;
+			Segment *seg_left = it_before->seg;
+			if (seg_left == seg_right || *seg_left < *seg_right)
+			{ // right is newer
+				anchor.replica = seg_right->replica->id;
+				anchor.stamp = seg_right->stamp;
+				anchor.pos = it->seg_pos - seg_right->len; // reversed anchor
+			}
+			else
+			{ // left is newer
+				anchor.replica = seg_left->replica->id;
+				anchor.stamp = seg_left->stamp;
+				anchor.pos = it_before->seg_pos + it_before->len; // normal anchor
+			}
+		}
+		else
+		{ // when inside the piece, we prefer to insert before the character
+			Segment *seg = it->seg;
+			anchor.replica = seg->replica->id;
+			anchor.stamp = seg->stamp;
+			anchor.pos = pos - it.position().visible + it->seg_pos - seg->len; // reversed anchor
+		}
+		return anchor;
 	}
 
 	size_t pos(const Anchor &anchor) const
@@ -640,7 +751,7 @@ public:
 			return std::string::npos;
 		auto it = piece_tree.find(stored);
 		// it.position().visible is the start of the piece, add the pos within the piece
-		return it.position().visible + (anchor.pos - it->seg_pos);
+		return it.position().visible + (stored.segPos() - it->seg_pos);
 	}
 
 	std::vector<OperationID> frontline() const
@@ -680,9 +791,9 @@ public:
 				case OperationType::Insert:
 				{
 					const auto *seg = static_cast<const Segment *>(stored);
-					assert(seg->parent != nullptr);
-					const auto *parent = seg->parent;
-					Anchor anchor(parent->operationID(), seg->insert_pos);
+					assert(seg->anchor.seg != nullptr);
+					const auto *parent = seg->anchor.seg;
+					Anchor anchor(parent->operationID(), seg->anchor.pos);
 					res.push_back(std::make_unique<Insertion>(replica.id, i, anchor, std::string(seg->data.get())));
 					break;
 				}
@@ -751,8 +862,7 @@ public:
 		if (segment == nullptr)
 			return false; // duplicate operation
 
-		segment->parent = anchor.seg;
-		segment->insert_pos = anchor.pos;
+		segment->anchor = anchor;
 		piece_tree.insert(segment);
 		return true;
 	}
@@ -880,7 +990,7 @@ private:
 
 	void redoDel(StoredDeletion *target)
 	{
-		assert(target->left->status == TagStatus::Undone && target->right->status != TagStatus::Undone);
+		assert(target->left->status == TagStatus::Undone && target->right->status == TagStatus::Undone);
 		auto left_piece = piece_tree.find(target->left->anchor);
 		auto right_piece = piece_tree.find(target->right->anchor);
 
@@ -929,8 +1039,7 @@ private:
 			if (piece->tombStone == nullptr || *piece->tombStone < *op)
 				piece->tombStone = static_cast<StoredRangeOp *>(op);
 		});
-
-		piece_tree.update(&*left_piece, &*right_piece);
+		piece_tree.update(left_piece, right_piece);
 	}
 
 	void undoDel(StoredDeletion *target)
@@ -952,7 +1061,7 @@ private:
 
 		auto left_piece = piece_tree.find(target->left->anchor);
 		auto right_piece = piece_tree.find(target->right->anchor);
-		piece_tree.update(&*left_piece, &*right_piece);
+		piece_tree.update(left_piece, right_piece);
 	}
 
 	void redoInsertion(Segment *target)
@@ -992,8 +1101,8 @@ private:
 
 		auto begin_piece = piece_tree.find(stored_op->left->anchor);
 		auto end_piece = piece_tree.find(stored_op->right->anchor);
-		if (stored_op->right->anchor.pos == stored_op->right->anchor.seg->len)
-		{ // for right closed anchor at the end of segment
+		if (!stored_op->right->anchor.isReversed())
+		{ // for right closed anchor
 			++end_piece;
 		}
 		for (; begin_piece != end_piece; ++begin_piece)
@@ -1106,12 +1215,19 @@ private:
 		for (++it;; ++it)
 		{
 			// update piece tree
-			bool right_inclusive = (it->anchor.pos == it->anchor.seg->len);
-			for (; begin_piece->seg != it->anchor.seg || begin_piece->seg_pos != it->anchor.pos; ++begin_piece)
+			if (it->anchor.isReversed())
 			{
-				updateFunc(&*begin_piece, newest);
-				if (right_inclusive && begin_piece == it->anchor.seg->last_piece)
-					break;
+				for (; begin_piece->seg != it->anchor.seg || begin_piece->seg_pos != it->anchor.segPos(); ++begin_piece)
+				{
+					updateFunc(&*begin_piece, newest);
+				}
+			}
+			else
+			{
+				for (; begin_piece->seg != it->anchor.seg || begin_piece->seg_pos + begin_piece->len != it->anchor.pos; ++begin_piece)
+				{
+					updateFunc(&*begin_piece, newest);
+				}
 			}
 			if (it == right_it)
 				break;
