@@ -134,9 +134,10 @@ struct Segment : public UndoRedoableOp
 	Segment(const std::string &str)
 		: UndoRedoableOp(OperationType::Insert)
 	{
+		// TODO: ensure that str.size() <= INT32_MAX
 		data = std::make_unique<const char[]>(str.size() + 1);
 		memcpy(const_cast<char *>(data.get()), str.c_str(), str.size() + 1);
-		len = utf8::distance(data.get(), data.get() + str.size());
+		len = static_cast<int32_t>(utf8::distance(data.get(), data.get() + str.size()));
 
 		// collect newline positions in UTF-8 character offsets
 		if (!str.empty())
@@ -317,8 +318,8 @@ struct Piece
 {
 	Segment *seg{nullptr};
 	const char *data{nullptr};
-	uint32_t len{0};
-	uint32_t seg_pos{0};
+	int32_t len{0};
+	int32_t seg_pos{0};
 	StoredRangeOp *tombStone{nullptr};
 
 	Piece() = default;
@@ -335,7 +336,8 @@ struct Piece
 
 	PieceInfo size() const
 	{
-		return {.total = len, .visible = isRemoved() ? 0 : len};
+		return {.total = static_cast<size_t>(len),
+				.visible = isRemoved() ? 0 : static_cast<size_t>(len)};
 	}
 
 	bool operator<(const Piece &other) const
@@ -400,8 +402,8 @@ public:
 		});
 	}
 
-	// Finds the piece containing the file position, if pos is at the boundary, return the next piece
-	Iterator find(size_t file_pos) const
+	// Finds the first piece with end position > file_pos
+	Iterator upper_bound(size_t file_pos) const
 	{
 		return Base::find(file_pos, [](size_t a, const PieceInfo &b)
 		{
@@ -409,6 +411,7 @@ public:
 		});
 	}
 
+	// Finds the first piece with end position >= file_pos
 	Iterator lower_bound(size_t file_pos) const
 	{
 		return Base::find(file_pos, [](size_t a, const PieceInfo &b)
@@ -428,26 +431,9 @@ public:
 		return Iterator(*piece_it);
 	}
 
-	Anchor historyAnchor(size_t pos) const
-	{
-		Iterator it = findHistory(pos);
-		if (it.isNull())
-			return Anchor();
-		Segment *seg = it->seg;
-		Anchor anchor;
-		anchor.replica = seg->replica->id;
-		anchor.stamp = seg->stamp;
-		anchor.pos = pos - it.position().total + it->seg_pos;
-		return anchor;
-	}
-
 	size_t historyPos(const StoredAnchor &anchor) const
 	{
 		Iterator it = find(anchor);
-		if (it == this->end())
-		{
-			Iterator it2 = find(anchor);
-		}
 		return it.position().total + (anchor.segPos() - it->seg_pos);
 	}
 
@@ -510,7 +496,7 @@ public:
 	// return the right part
 	Iterator split(Iterator it, int32_t pos)
 	{
-		assert(pos > 0 && pos < it->len);
+		assert(0 < pos && pos < it->len);
 
 		size_t offset = 0;
 		const char *ptr = it->data;
@@ -533,7 +519,7 @@ public:
 };
 
 template <typename T, RangeInterval RightOpen, uint8_t N>
-class RangeTree : protected OrderedSet<RangeTag, N>
+class RangeTree : public OrderedSet<RangeTag, N>
 {
 public:
 	using Base = OrderedSet<RangeTag, N>;
@@ -550,8 +536,8 @@ public:
 	auto apply(RangeTag left, RangeTag right, PieceTree &piece_tree)
 	{
 		// left and right can be on the same piece, so we need to split right first
-		auto end = this->addTag<false>(right, piece_tree);
 		auto begin = this->addTag<true>(left, piece_tree);
+		auto end = this->addTag<false>(right, piece_tree);
 		return std::make_pair(begin, end);
 	}
 
@@ -685,27 +671,26 @@ public:
 		Anchor anchor;
 		if (pos == 0)
 			return anchor;
-		// TODO: here we should use lower_bound
 		auto it = piece_tree.lower_bound(pos);
 		if (it.isNull())
 			return anchor;
 		Segment *seg = it->seg;
 		anchor.replica = seg->replica->id;
 		anchor.stamp = seg->stamp;
-		anchor.pos = pos - it.position().visible + it->seg_pos;
+		anchor.pos = static_cast<int32_t>(pos - it.position().visible + it->seg_pos);
 		return anchor;
 	}
 
 	Anchor reversedAnchor(size_t pos) const
 	{
 		Anchor anchor;
-		auto it = piece_tree.find(pos);
+		auto it = piece_tree.upper_bound(pos);
 		if (it.isNull())
 			return anchor;
 		Segment *seg = it->seg;
 		anchor.replica = seg->replica->id;
 		anchor.stamp = seg->stamp;
-		anchor.pos = pos - it.position().visible + it->seg_pos - seg->len;
+		anchor.pos = static_cast<int32_t>(pos - it.position().visible + it->seg_pos - seg->len);
 		return anchor;
 	}
 
@@ -713,7 +698,7 @@ public:
 	// brief of this algorithm: always attach the insertion to the newer piece at left/right.
 	Anchor insertAnchor(size_t pos) const
 	{
-		auto it = piece_tree.find(pos);
+		auto it = piece_tree.upper_bound(pos);
 		Anchor anchor;
 		if (pos > 0 && pos == it.position().visible)
 		{ // as begining of the piece
@@ -739,7 +724,7 @@ public:
 			Segment *seg = it->seg;
 			anchor.replica = seg->replica->id;
 			anchor.stamp = seg->stamp;
-			anchor.pos = pos - it.position().visible + it->seg_pos - seg->len; // reversed anchor
+			anchor.pos = static_cast<int32_t>(pos - it.position().visible + it->seg_pos - seg->len); // reversed anchor
 		}
 		return anchor;
 	}
@@ -780,7 +765,7 @@ public:
 				}
 			}
 
-			for (size_t i = start_stamp; i < replica.operations.size(); ++i)
+			for (uint32_t i = start_stamp; i < replica.operations.size(); ++i)
 			{
 				const auto *stored = replica.operations[i].get();
 				if (!stored)
@@ -1004,15 +989,15 @@ private:
 			assert(op == nullptr || op->right->old.isGood());
 			if (op == nullptr)
 				target->left->old = nullptr;
-			else if (op->right->anchor != target->left->anchor)
+			else if (op->left->anchor != target->left->anchor)
 			{
 				if (*op < *target)
 					target->left->old = op;
 			}
-			else if (op->right->old == nullptr || *op->right->old < *target)
+			else if (op->left->old == nullptr || *op->left->old < *target)
 			{
-				assert(op->right->status == TagStatus::Active && "tombStone should be Active");
-				target->left->old = op->right->old;
+				assert(op->left->status == TagStatus::Active && "tombStone should be Active");
+				target->left->old = op->left->old;
 			}
 		}
 		{
@@ -1022,15 +1007,15 @@ private:
 			assert(op == nullptr || op->left->old.isGood());
 			if (op == nullptr)
 				target->right->old = nullptr;
-			else if (op->left->anchor != target->right->anchor)
+			else if (op->right->anchor != target->right->anchor)
 			{
 				if (*op < *target)
 					target->right->old = op;
 			}
-			else if (op->left->old == nullptr || *op->left->old < *target)
+			else if (op->right->old == nullptr || *op->right->old < *target)
 			{
-				assert(op->left->status == TagStatus::Active && "tombStone should be Active");
-				target->right->old = op->left->old;
+				assert(op->right->status == TagStatus::Active && "tombStone should be Active");
+				target->right->old = op->right->old;
 			}
 		}
 
@@ -1224,9 +1209,11 @@ private:
 			}
 			else
 			{
-				for (; begin_piece->seg != it->anchor.seg || begin_piece->seg_pos + begin_piece->len != it->anchor.pos; ++begin_piece)
+				for (;; ++begin_piece)
 				{
 					updateFunc(&*begin_piece, newest);
+					if (begin_piece->seg == it->anchor.seg && begin_piece->seg_pos + begin_piece->len == it->anchor.pos)
+						break;
 				}
 			}
 			if (it == right_it)

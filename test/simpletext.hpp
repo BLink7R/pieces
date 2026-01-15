@@ -205,9 +205,27 @@ public:
 class PieceCRDTValidator : public PieceCRDT
 {
 public:
-	auto historyAnchor(size_t pos)
+	ClosedRange historyRange(size_t start, size_t end)
 	{
-		return piece_tree.historyAnchor(pos);
+		Iterator it_begin = piece_tree.findHistory(start);
+		Iterator it_end = piece_tree.findHistory(end);
+		Anchor anchor_begin;
+		if (!it_begin.isNull())
+		{ // begin is reversed
+			Segment *seg = it_begin->seg;
+			anchor_begin = Anchor(seg->operationID(), start - it_begin.position().total + it_begin->seg_pos - seg->len);
+		}
+		Anchor anchor_end;
+		if (!it_end.isNull())
+		{
+			if (end - it_end.position().total + it_end->seg_pos == 0)
+			{
+				--end;
+			}
+			Segment *seg = it_end->seg;
+			anchor_end = Anchor(seg->operationID(), end - it_end.position().total + it_end->seg_pos);
+		}
+		return ClosedRange(anchor_begin, anchor_end);
 	}
 
 	bool validate()
@@ -223,6 +241,10 @@ public:
 		}
 
 		//
+		// for (const auto& tag: deletions)
+		// {
+		// 	std::cout << piece_tree.historyPos(tag.anchor) << " id " << tag.cur->replica << " pos " << tag.anchor.pos << "\n";
+		// }
 		for (const auto &replica : replicas)
 		{
 			for (const auto &op : replica.operations)
@@ -237,8 +259,8 @@ public:
 					auto &left = del->left->anchor;
 					auto &right = del->right->anchor;
 
-					size_t start = piece_tree.find(left).position().total;
-					size_t end = piece_tree.find(right).position().total;
+					size_t start = piece_tree.historyPos(del->left->anchor);
+					size_t end = piece_tree.historyPos(del->right->anchor);
 
 					for (size_t k = start; k < end; ++k)
 					{

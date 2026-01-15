@@ -3,12 +3,14 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <random>
 #include <set>
 #include <sstream>
 #include <string>
 #include <tuple>
 #include <vector>
+
 
 #include "crdt.hpp"
 #include "piecetree.hpp"
@@ -43,8 +45,8 @@ void runInsertTest(int numInsertions, int minLen = 1, int maxLen = 20)
 	std::mt19937 gen(rd());
 
 	// 创建两个数据结构实例
-	PieceCRDT doc;
-	SimpleText validator;
+	PlainText doc;
+	SimpleDeferredText validator;
 	std::set<std::string> test_set;
 	size_t tot_len = 0;
 	uint32_t operation_stamp = 3;
@@ -66,30 +68,21 @@ void runInsertTest(int numInsertions, int minLen = 1, int maxLen = 20)
 		validator.insert(insert_pos, str);
 
 		// test_set.insert(str);
-		Anchor anchor = doc.anchor(insert_pos);
-		Insertion insertion(doc.id(), operation_stamp++, anchor, str);
-		doc.insert(insertion);
+		doc.insert(insert_pos, str);
 		tot_len += str.size();
 
 		if ((i + 1) % 50 == 0 && tot_len > 0)
 		{
-
-			// 构建piece tree的内容
-			std::stringstream tree_content;
-			for (auto it = doc.begin(), end_it = --doc.end(); it != end_it; ++it)
-			{
-				tree_content << std::string_view(it->data, it->len);
-			}
-
+			std::string tree_content = doc.toString();
 			// 验证内容
-			bool content_match = (tree_content.str() == validator.toString());
+			bool content_match = (tree_content == validator.toString());
 			std::cout << "Content " << (content_match ? "matches" : "differs") << std::endl;
 
 			if (!content_match)
 			{
 				std::cout << "Test failed at iteration " << i << std::endl;
 				std::cout << "Expect: " << validator.toString() << std::endl;
-				std::cout << "Actual: " << tree_content.str() << std::endl;
+				std::cout << "Actual: " << tree_content << std::endl;
 			}
 		}
 	}
@@ -108,7 +101,7 @@ void runInsertDeleteTest(int numOps, int minLen = 1, int maxLen = 20)
 	std::random_device rd;
 	std::mt19937 gen(rd());
 
-	PieceCRDT doc;
+	PlainText doc;
 	SimpleText validator;
 	size_t tot_len = 0;
 	uint32_t operation_stamp = 1;
@@ -121,9 +114,8 @@ void runInsertDeleteTest(int numOps, int minLen = 1, int maxLen = 20)
 		size_t insert_pos = pos_dist(gen);
 
 		validator.insert(insert_pos, str);
-		Anchor anchor = doc.anchor(insert_pos);
-		Insertion ins(doc.id(), operation_stamp++, anchor, str);
-		doc.insert(ins);
+		doc.insert(insert_pos, str);
+		std::cout << "I " << str << " " << insert_pos << "\n";
 		tot_len += str.size();
 
 		// 每 10 次做一次删除
@@ -139,31 +131,78 @@ void runInsertDeleteTest(int numOps, int minLen = 1, int maxLen = 20)
 			std::uniform_int_distribution<size_t> del_pos_dist(0, tot_len - len);
 			size_t del_pos = del_pos_dist(gen);
 
-			Anchor begin = doc.anchor(del_pos);
-			Anchor end = doc.anchor(del_pos + len);
-			Deletion del(doc.id(), operation_stamp++, begin, end);
-			doc.del(del);
-
+			std::cout << "D " << del_pos << " " << del_pos + len << "\n";
+			doc.del(del_pos, del_pos + len);
 			validator.erase(del_pos, len);
 			tot_len -= len;
 		}
 
 		// 构建 PieceCRDT 内容并验证
-		std::stringstream tree_content;
-		for (auto it = doc.begin(), end_it = --doc.end(); it != end_it; ++it)
-		{
-			if (it->isRemoved())
-				continue;
-			tree_content << std::string_view(it->data, it->len);
-		}
-
+		std::string tree_content = doc.toString();
 		std::string expect = validator.toString();
-		bool match = (tree_content.str() == expect);
+		bool match = (tree_content == expect);
 		std::cout << "Insert+Delete Test Content " << (match ? "matches" : "differs") << std::endl;
 		if (!match)
 		{
 			std::cout << "Doc size: " << doc.size() << ", Validator size: " << expect.size() << "\n";
 		}
+	}
+}
+
+void readTest(const std::string &filename)
+{
+	std::cout << "Running read test from " << filename << "...\n";
+	std::ifstream file(filename);
+	if (!file.is_open())
+	{
+		std::cerr << "Failed to open file: " << filename << "\n";
+		return;
+	}
+
+	PlainText doc;
+	SimpleText validator;
+	std::string line;
+
+	while (std::getline(file, line))
+	{
+		std::stringstream ss(line);
+		std::string type;
+		ss >> type;
+
+		if (type == "I")
+		{
+			std::string text;
+			size_t pos;
+			ss >> text >> pos;
+			std::cout << "I " << text << " " << pos << "\n";
+			doc.insert(pos, text);
+			validator.insert(pos, text);
+		}
+		else if (type == "D")
+		{
+			size_t start, end;
+			ss >> start >> end;
+			size_t len = end - start;
+			std::cout << "D " << start << " " << end << "\n";
+			doc.del(start, end);
+			validator.erase(start, len);
+		}
+
+		std::string tree_content = doc.toString();
+		std::string expect = validator.toString();
+		bool match = (tree_content == expect);
+
+		std::cout << "Content " << (match ? "matches" : "differs") << " (len: " << tree_content.length() << ")\n";
+		if (!match)
+		{
+			std::cout << "Test failed!" << std::endl;
+			std::cout << "Doc size: " << tree_content.length() << ", Validator size: " << expect.length() << "\n";
+			std::cout << "Actual: " << tree_content << "\n";
+			std::cout << "Expect: " << expect << "\n";
+			break;
+		}
+		std::cout << "Actual: " << tree_content << "\n";
+		std::cout << "Expect: " << expect << "\n";
 	}
 }
 
@@ -175,12 +214,13 @@ void runDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	std::mt19937 gen(rd());
 
 	PieceCRDT doc;
-	SimpleText validator;
-	uint32_t op_stamp = 1;
+	SimpleDeferredText validator;
+	validator.insert(0, "");
+	uint32_t op_stamp = 2;
 
 	// 1. 插入长度为 5000 的初始文本
 	std::string initial = generateRandomString(gen, start_len, start_len);
-	Anchor init_anchor = doc.anchor(0);
+	Anchor init_anchor = doc.insertAnchor(0);
 	Insertion ins(doc.id(), op_stamp++, init_anchor, initial);
 	doc.insert(ins);
 	validator.insert(0, initial);
@@ -207,7 +247,7 @@ void runDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 		size_t pos = pos_dist(gen);
 
 		// 在 PieceCRDT 上执行删除
-		Anchor begin = doc.anchor(pos);
+		Anchor begin = doc.reversedAnchor(pos);
 		Anchor end = doc.anchor(pos + len);
 		Deletion del(doc.id(), op_stamp, begin, end);
 		doc.del(del);
@@ -221,21 +261,9 @@ void runDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 		++op_stamp;
 	}
 
-	auto build_doc_string = [&]()
-	{
-		std::stringstream ss;
-		for (auto it = doc.begin(), end_it = --doc.end(); it != end_it; ++it)
-		{
-			if (it->isRemoved())
-				continue;
-			ss << std::string_view(it->data, it->len);
-		}
-		return ss.str();
-	};
-
 	auto check_equal = [&](const char *phase)
 	{
-		std::string doc_str = build_doc_string();
+		std::string doc_str = doc.toString();
 		std::string val_str = validator.toString();
 		bool match = (doc_str == val_str);
 		std::cout << phase << " content " << (match ? "matches" : "differs") << "\n";
@@ -280,15 +308,14 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 
 	// 1. 插入长度为 5000 的初始文本
 	std::string initial = generateRandomString(gen, start_len, start_len);
-	Anchor init_anchor = doc.anchor(0);
+	Anchor init_anchor = doc.insertAnchor(0);
 	Insertion ins(doc.id(), op_stamp++, init_anchor, initial);
 	doc.insert(ins);
 
-	const uint32_t del_stamp = op_stamp++;
-	std::vector<ReplicaID> deletion_ids;
+	std::vector<std::pair<ReplicaID, uint32_t>> deletion_ids;
 	deletion_ids.reserve(numOps);
 	for (int i = 0; i < numOps; ++i)
-		deletion_ids.push_back(uuids::uuid_random_generator(gen)());
+		deletion_ids.emplace_back(uuids::uuid_random_generator(gen)(), op_stamp++);
 	std::shuffle(deletion_ids.begin(), deletion_ids.end(), gen);
 
 	// 2. 随机进行 200 次删除（每次长度 10-20）
@@ -307,10 +334,9 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 		size_t pos = pos_dist(gen);
 
 		// 在 PieceCRDT 上执行删除
-		std::cout << "Deleting at pos " << pos << " length " << len << " id " << deletion_ids[i] << "\n";
-		Anchor begin = doc.historyAnchor(pos);
-		Anchor end = doc.historyAnchor(pos + len);
-		Deletion del(deletion_ids[i], del_stamp, begin, end);
+		std::cout << "Deleting at pos " << pos << " length " << len << " id " << deletion_ids[i].second << "\n";
+		ClosedRange range = doc.historyRange(pos, pos + len);
+		Deletion del(deletion_ids[i].first, deletion_ids[i].second, range.begin, range.end);
 		doc.del(del);
 
 		if (!doc.validate())
@@ -324,8 +350,8 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	std::shuffle(deletion_ids.begin(), deletion_ids.end(), gen);
 	for (auto &opid : deletion_ids)
 	{
-		std::cout << "Undoing operation stamp " << opid << "\n";
-		UndoOperation uop(doc.id(), op_stamp++, OperationID{opid, del_stamp});
+		std::cout << "Undoing operation stamp " << opid.second << "\n";
+		UndoOperation uop(doc.id(), op_stamp++, OperationID{opid.first, opid.second});
 		doc.undo(uop);
 		doc.validate();
 	}
@@ -334,75 +360,75 @@ void runHistoryDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	std::shuffle(deletion_ids.begin(), deletion_ids.end(), gen);
 	for (auto &opid : deletion_ids)
 	{
-		std::cout << "Redoing operation stamp " << opid << "\n";
-		RedoOperation rop(doc.id(), op_stamp++, OperationID{opid, del_stamp});
+		std::cout << "Redoing operation stamp " << opid.second << "\n";
+		RedoOperation rop(doc.id(), op_stamp++, OperationID{opid.first, opid.second});
 		doc.redo(rop);
 		doc.validate();
 	}
 }
 
-void coverTest()
-{
-	PieceCRDTValidator doc;
+// void coverTest()
+// {
+// 	PieceCRDTValidator doc;
 
-	std::string initial("012345678901234567890123456789");
-	Anchor init_anchor = doc.anchor(0);
-	Insertion ins(doc.id(), 1, init_anchor, initial);
-	doc.insert(ins);
+// 	std::string initial("012345678901234567890123456789");
+// 	Anchor init_anchor = doc.anchor(0);
+// 	Insertion ins(doc.id(), 1, init_anchor, initial);
+// 	doc.insert(ins);
 
-	Anchor begin = doc.historyAnchor(5);
-	Anchor end = doc.historyAnchor(25);
-	Deletion del1(doc.id(), 3, begin, end);
-	doc.del(del1);
+// 	Anchor begin = doc.historyAnchor(5);
+// 	Anchor end = doc.historyAnchor(25);
+// 	Deletion del1(doc.id(), 3, begin, end);
+// 	doc.del(del1);
 
-	begin = doc.historyAnchor(10);
-	end = doc.historyAnchor(20);
-	Deletion del2(doc.id(), 2, begin, end);
-	doc.del(del2);
+// 	begin = doc.historyAnchor(10);
+// 	end = doc.historyAnchor(20);
+// 	Deletion del2(doc.id(), 2, begin, end);
+// 	doc.del(del2);
 
-	UndoOperation uop(doc.id(), 4, OperationID{doc.id(), del1.stamp});
-	doc.undo(uop);
+// 	UndoOperation uop(doc.id(), 4, OperationID{doc.id(), del1.stamp});
+// 	doc.undo(uop);
 
-	doc.validate();
-}
+// 	doc.validate();
+// }
 
-void speedTest(int numInsertions, int minLen = 1, int maxLen = 20)
-{
-	std::random_device rd;
-	std::mt19937 gen(rd());
-	PieceCRDT doc;
-	size_t tot_len = 0;
-	uint32_t operation_stamp = 3;
-	auto start = std::chrono::high_resolution_clock::now();
-	for (int i = 0; i < numInsertions; ++i)
-	{
-		std::string str = generateRandomString(gen, minLen, maxLen);
-		std::uniform_int_distribution<size_t> pos_dist(0, tot_len);
-		size_t insert_pos = pos_dist(gen);
-		Anchor anchor = doc.anchor(insert_pos);
-		Insertion insertion(doc.id(), operation_stamp++, anchor, str);
-		doc.insert(insertion);
-		tot_len += str.size();
-		// if ((i + 1) % 10 == 0 && tot_len > 0) {
-		//     std::uniform_int_distribution<> delete_len_dist(5, 10);
-		//     size_t delete_length = delete_len_dist(gen);
-		//     if (delete_length > tot_len) delete_length = tot_len;
-		//     std::uniform_int_distribution<size_t> delete_pos_dist(0, tot_len - delete_length);
-		//     size_t delete_pos = delete_pos_dist(gen);
-		//     Anchor begin_anchor = tree.anchor(delete_pos);
-		//     Anchor end_anchor = tree.anchor(delete_pos + delete_length);
-		//     Deletion deletion(ReplicaID{0,0}, operation_stamp++, begin_anchor, end_anchor);
-		//     tree.remove(deletion);
-		//     tot_len -= delete_length;
-		// }
-	}
-	auto end = std::chrono::high_resolution_clock::now();
-	auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-	std::cout << "\nSpeed test completed!\n";
-	std::cout << "Time taken: " << duration.count() << "ms\n";
-	std::cout << "Number of pieces in PieceTree: " << doc.size() << "\n";
-	std::cout << "Average time per insertion: " << duration.count() / (double)numInsertions << "ms\n";
-}
+// void speedTest(int numInsertions, int minLen = 1, int maxLen = 20)
+// {
+// 	std::random_device rd;
+// 	std::mt19937 gen(rd());
+// 	PieceCRDT doc;
+// 	size_t tot_len = 0;
+// 	uint32_t operation_stamp = 3;
+// 	auto start = std::chrono::high_resolution_clock::now();
+// 	for (int i = 0; i < numInsertions; ++i)
+// 	{
+// 		std::string str = generateRandomString(gen, minLen, maxLen);
+// 		std::uniform_int_distribution<size_t> pos_dist(0, tot_len);
+// 		size_t insert_pos = pos_dist(gen);
+// 		Anchor anchor = doc.anchor(insert_pos);
+// 		Insertion insertion(doc.id(), operation_stamp++, anchor, str);
+// 		doc.insert(insertion);
+// 		tot_len += str.size();
+// 		// if ((i + 1) % 10 == 0 && tot_len > 0) {
+// 		//     std::uniform_int_distribution<> delete_len_dist(5, 10);
+// 		//     size_t delete_length = delete_len_dist(gen);
+// 		//     if (delete_length > tot_len) delete_length = tot_len;
+// 		//     std::uniform_int_distribution<size_t> delete_pos_dist(0, tot_len - delete_length);
+// 		//     size_t delete_pos = delete_pos_dist(gen);
+// 		//     Anchor begin_anchor = tree.anchor(delete_pos);
+// 		//     Anchor end_anchor = tree.anchor(delete_pos + delete_length);
+// 		//     Deletion deletion(ReplicaID{0,0}, operation_stamp++, begin_anchor, end_anchor);
+// 		//     tree.remove(deletion);
+// 		//     tot_len -= delete_length;
+// 		// }
+// 	}
+// 	auto end = std::chrono::high_resolution_clock::now();
+// 	auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+// 	std::cout << "\nSpeed test completed!\n";
+// 	std::cout << "Time taken: " << duration.count() << "ms\n";
+// 	std::cout << "Number of pieces in PieceTree: " << doc.size() << "\n";
+// 	std::cout << "Average time per insertion: " << duration.count() / (double)numInsertions << "ms\n";
+// }
 
 void runHistoryDeleteUndoRedoTestFromFile(const std::string &filename, int start_len = 5000)
 {
@@ -432,7 +458,7 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string &filename, int start
 		std::stringstream ss(line);
 		std::string segment;
 		std::vector<std::string> parts;
-		while (std::getline(ss, segment, ','))
+		while (std::getline(ss, segment, ' '))
 		{
 			parts.push_back(segment);
 		}
@@ -462,11 +488,12 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string &filename, int start
 
 	PieceCRDTValidator doc;
 	uint32_t op_stamp = max_file_stamp + 1;
+	std::map<int, ReplicaID> deletion_ids;
 
 	// 1. 插入长度为 5000 的初始文本
 	std::string initial = generateRandomString(gen, start_len, start_len);
-	Anchor init_anchor = doc.anchor(0);
-	Insertion ins(doc.id(), 1, init_anchor, initial);
+	Anchor init_anchor = doc.insertAnchor(0);
+	Insertion ins(doc.id(), 2, init_anchor, initial);
 	doc.insert(ins);
 
 	// 2. 执行文件中的操作
@@ -478,10 +505,10 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string &filename, int start
 		{
 			std::cout << "Deleting at pos " << op.pos << " length " << op.len << " stamp " << op.stamp << "\n";
 
-			Anchor begin = doc.historyAnchor(op.pos);
-			Anchor end = doc.historyAnchor(op.pos + op.len);
-			Deletion del(doc.id(), op.stamp, begin, end);
+			ClosedRange range = doc.historyRange(op.pos, op.pos + op.len);
+			Deletion del(generateReplicaID(), op.stamp, range.begin, range.end);
 			doc.del(del);
+			deletion_ids[op.stamp] = del.replica;
 
 			if (!doc.validate())
 			{
@@ -492,8 +519,8 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string &filename, int start
 		else if (op.type == 'U')
 		{
 			std::cout << "Undoing operation stamp " << op.stamp << "\n";
-			UndoOperation uop(doc.id(), op_stamp++, OperationID{doc.id(), static_cast<uint32_t>(op.stamp)});
-			doc.undo(uop);
+			UndoOperation uop(doc.id(), op_stamp++, OperationID{deletion_ids[op.stamp], static_cast<uint32_t>(op.stamp)});
+ 			doc.undo(uop);
 
 			if (!doc.validate())
 			{
@@ -504,7 +531,7 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string &filename, int start
 		else if (op.type == 'R')
 		{
 			std::cout << "Redoing operation stamp " << op.stamp << "\n";
-			RedoOperation rop(doc.id(), op_stamp++, OperationID{doc.id(), static_cast<uint32_t>(op.stamp)});
+			RedoOperation rop(doc.id(), op_stamp++, OperationID{deletion_ids[op.stamp], static_cast<uint32_t>(op.stamp)});
 			doc.redo(rop);
 
 			if (!doc.validate())
@@ -516,81 +543,81 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string &filename, int start
 	}
 }
 
-void oldtagTest()
-{
-	PieceCRDTValidator doc;
-	std::cout << "doc id: " << doc.id() << "\n";
-	uint32_t op_stamp = 2;
+// void oldtagTest()
+// {
+// 	PieceCRDTValidator doc;
+// 	std::cout << "doc id: " << doc.id() << "\n";
+// 	uint32_t op_stamp = 2;
 
-	std::string initial("Hello, this is a test string for old tag testing.");
-	Anchor init_anchor = doc.anchor(0);
-	Insertion ins(doc.id(), op_stamp++, init_anchor, initial);
-	doc.insert(ins);
+// 	std::string initial("Hello, this is a test string for old tag testing.");
+// 	Anchor init_anchor = doc.anchor(0);
+// 	Insertion ins(doc.id(), op_stamp++, init_anchor, initial);
+// 	doc.insert(ins);
 
-	auto id1 = op_stamp;
-	{
-		Anchor begin = doc.historyAnchor(0);
-		Anchor end = doc.historyAnchor(20);
-		Deletion del1(doc.id(), op_stamp++, begin, end);
-		doc.del(del1);
-	}
+// 	auto id1 = op_stamp;
+// 	{
+// 		Anchor begin = doc.historyAnchor(0);
+// 		Anchor end = doc.historyAnchor(20);
+// 		Deletion del1(doc.id(), op_stamp++, begin, end);
+// 		doc.del(del1);
+// 	}
 
-	auto id2 = op_stamp;
-	{
-		Anchor begin = doc.historyAnchor(5);
-		Anchor end = doc.historyAnchor(15);
-		Deletion del1(doc.id(), op_stamp++, begin, end);
-		doc.del(del1);
-	}
+// 	auto id2 = op_stamp;
+// 	{
+// 		Anchor begin = doc.historyAnchor(5);
+// 		Anchor end = doc.historyAnchor(15);
+// 		Deletion del1(doc.id(), op_stamp++, begin, end);
+// 		doc.del(del1);
+// 	}
 
-	UndoOperation uop(doc.id(), op_stamp++, OperationID{doc.id(), id2});
-	doc.undo(uop);
-	doc.validate();
-	UndoOperation uop2(doc.id(), op_stamp++, OperationID{doc.id(), id1});
-	doc.undo(uop2);
-	doc.validate();
-	RedoOperation rop(doc.id(), op_stamp++, OperationID{doc.id(), id2});
-	doc.redo(rop);
-	doc.validate();
-}
+// 	UndoOperation uop(doc.id(), op_stamp++, OperationID{doc.id(), id2});
+// 	doc.undo(uop);
+// 	doc.validate();
+// 	UndoOperation uop2(doc.id(), op_stamp++, OperationID{doc.id(), id1});
+// 	doc.undo(uop2);
+// 	doc.validate();
+// 	RedoOperation rop(doc.id(), op_stamp++, OperationID{doc.id(), id2});
+// 	doc.redo(rop);
+// 	doc.validate();
+// }
 
-void insertUndoTest()
-{
-	PlainText text;
-	text.insert(0, "12345");
-	PlainText text2(text.replicaID());
-	text2.apply(text.diff());
+// void insertUndoTest()
+// {
+// 	PlainText text;
+// 	text.insert(0, "12345");
+// 	PlainText text2(text.replicaID());
+// 	text2.apply(text.diff());
 
-	text2.del(0, 5);
-	text.apply(text2.diff(text.frontline()));
-	std::cout << "Text after sync: " << text.toString() << "\n";
+// 	text2.del(0, 5);
+// 	text.apply(text2.diff(text.frontline()));
+// 	std::cout << "Text after sync: " << text.toString() << "\n";
 
-	text.insert(0, "aaa");
-	text.undo();
-	text2.apply(text.diff(text2.frontline()));
-	std::cout << "Text after sync: " << text2.toString() << "\n";
+// 	text.insert(0, "aaa");
+// 	text.undo();
+// 	text2.apply(text.diff(text2.frontline()));
+// 	std::cout << "Text after sync: " << text2.toString() << "\n";
 
-	text2.insert(0, "bbb");
-	text2.undo();
-	text2.redo();
-	std::cout << "Text2 after undo: " << text2.toString() << "\n";
-}
+// 	text2.insert(0, "bbb");
+// 	text2.undo();
+// 	text2.redo();
+// 	std::cout << "Text2 after undo: " << text2.toString() << "\n";
+// }
 
-void insertOnEdgeTest()
-{
-	PlainText text;
-	text.insert(0, "aaa");
-	text.insert(0, "bbb");
-	Anchor anchor = text.toAnchor(3);
-	text.undo();
-	text.undo();
-	text.apply(Insertion{generateReplicaID(), 10, anchor, "ccc"});
-	std::cout << "Text after insert on edge: " << text.toString() << "\n";
-}
+// void insertOnEdgeTest()
+// {
+// 	PlainText text;
+// 	text.insert(0, "aaa");
+// 	text.insert(0, "bbb");
+// 	Anchor anchor = text.toAnchor(3);
+// 	text.undo();
+// 	text.undo();
+// 	text.apply(Insertion{generateReplicaID(), 10, anchor, "ccc"});
+// 	std::cout << "Text after insert on edge: " << text.toString() << "\n";
+// }
 
 int main(int argn, char **argv)
 {
-	insertOnEdgeTest();
+	// insertOnEdgeTest();
 	// oldtagTest();
 	// insertUndoTest();
 	// text.redo();
@@ -598,8 +625,10 @@ int main(int argn, char **argv)
 	// text.diff();
 	// coverTest();
 	// runInsertDeleteTest(1000, 30, 40);
+	// readTest("../../../test4.txt");
 	// runDeleteUndoRedoTest(200, 5000);
-	// runHistoryDeleteUndoRedoTest(200, 5000);
+	runHistoryDeleteUndoRedoTest(200, 5000);
+	// runHistoryDeleteUndoRedoTestFromFile("../../../test6.txt", 5000);
 	// int numInsertions = 5000; // 默认插入次数
 	// if (argn > 1)
 	// {
