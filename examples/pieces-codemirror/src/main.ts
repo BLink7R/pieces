@@ -131,14 +131,7 @@ function createEditor(parentElement: HTMLElement, Module: PiecesModule) {
       // has deletion
       if (len > 0) {
         flush();
-        let op: Deletion = {
-          replica: "",
-          stamp: 0,
-          type: Module.OperationType.Delete,
-          begin: crdt.toAnchor(fromA),
-          end: crdt.toAnchor(toA)
-        };
-        crdt.delAnchor(op.begin, op.end);
+        crdt.del(fromA, toA);
       }
 
       if (text.length > 0) {

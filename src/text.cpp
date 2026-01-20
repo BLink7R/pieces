@@ -45,7 +45,7 @@ size_t PlainText::del(size_t begin, size_t end)
 	return del(toClosedRange(begin, end));
 }
 
-size_t PlainText::del(ClosedRange range)
+size_t PlainText::del(const ClosedRange &range)
 {
 	Deletion op(doc.id(), doc.stamp(), range.begin, range.end);
 	if (!doc.del(op))

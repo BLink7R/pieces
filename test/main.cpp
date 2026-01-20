@@ -615,8 +615,27 @@ void runHistoryDeleteUndoRedoTestFromFile(const std::string &filename, int start
 // 	std::cout << "Text after insert on edge: " << text.toString() << "\n";
 // }
 
+void selectionTest()
+{
+	PlainText doc;
+	doc.insert(0, "Hello CRDT! Editor 1");
+	doc.del(0, 20);
+	doc.insert(0, "aaa");
+
+	PlainText doc2(doc.origin());
+	doc2.apply(doc.diff(doc2.frontline()));
+	doc2.insert(3, "bbb");
+
+	std::cout << doc.toPos(doc.toAnchor(3)) << "\n";
+	doc.apply(doc2.diff(doc.frontline()));
+	std::cout << doc.toString() << '\n'; // aaabbb
+	doc.undo();
+	std::cout << doc.toString() << '\n'; // aaabbb
+}
+
 int main(int argn, char **argv)
 {
+	// selectionTest();
 	// insertOnEdgeTest();
 	// oldtagTest();
 	// insertUndoTest();

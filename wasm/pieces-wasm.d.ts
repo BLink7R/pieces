@@ -9,6 +9,16 @@ export interface Anchor {
     pos: number;
 }
 
+export interface OpenedRange {
+    begin: Anchor;
+    end: Anchor;
+}
+
+export interface ClosedRange {
+    begin: Anchor;
+    end: Anchor;
+}
+
 export enum OperationType {
     Insert = 0,
     Delete = 1,
@@ -31,8 +41,7 @@ export interface Insertion extends Operation {
 
 export interface Deletion extends Operation {
     type: OperationType.Delete;
-    begin: Anchor;
-    end: Anchor;
+    range: ClosedRange;
 }
 
 export interface UndoOperation extends Operation {
@@ -56,7 +65,8 @@ export class PlainText {
     insert(index: number, text: string): number;
     insertAnchor(anchor: Anchor, text: string): number;
     del(start: number, end: number): number;
-    delAnchor(start: Anchor, end: Anchor): number;
+    delAnchor(range: ClosedRange): number;
+    toRange(start: number, end: number): ClosedRange;
     toAnchor(offset: number): Anchor;
     toOffset(anchor: Anchor): number;
     undo(): void;

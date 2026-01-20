@@ -149,6 +149,14 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.field("stamp", &Anchor::stamp)
 		.field("pos", &Anchor::pos);
 
+	value_object<OpenedRange>("OpenedRange")
+		.field("begin", &OpenedRange::begin)
+		.field("end", &OpenedRange::end);
+
+	value_object<ClosedRange>("ClosedRange")
+		.field("begin", &ClosedRange::begin)
+		.field("end", &ClosedRange::end);
+
 	// Note: value_object cannot inherit from other value_objects.
 	// We must flatten the fields from the base Operation class into each derived struct's value_object definition.
 	value_object<Insertion>("Insertion")
@@ -166,8 +174,7 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.field("stamp", &Operation::stamp)
 		.field("type", &Operation::type)
 		// Deletion specific fields
-		.field("begin", &Deletion::begin)
-		.field("end", &Deletion::end);
+		.field("range", &Deletion::range);
 
 	value_object<UndoOperation>("UndoOperation")
 		// Base Operation fields
@@ -196,7 +203,8 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.function("insert", select_overload<size_t(size_t, const std::string &)>(&PlainText::insert))
 		.function("insertAnchor", select_overload<size_t(const Anchor &, const std::string &)>(&PlainText::insert))
 		.function("del", select_overload<size_t(size_t, size_t)>(&PlainText::del))
-		.function("delAnchor", select_overload<size_t(const Anchor &, const Anchor &)>(&PlainText::del))
+		.function("delAnchor", select_overload<size_t(const ClosedRange &)>(&PlainText::del))
+		.function("toRange", &PlainText::toClosedRange)
 		.function("toAnchor", &PlainText::toAnchor)
 		.function("toOffset", &PlainText::toPos)
 		.function("undo", &PlainText::undo)

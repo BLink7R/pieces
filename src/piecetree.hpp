@@ -88,8 +88,12 @@ struct StoredAnchor
 	Segment *seg{nullptr};
 	int32_t pos{0};
 
-	StoredAnchor(Segment *seg = nullptr, int32_t pos = 0)
-		: seg(seg), pos(pos) {}
+	StoredAnchor() = default;
+	StoredAnchor(Segment *seg, int32_t pos)
+		: seg(seg), pos(pos)
+	{
+		assert(seg != nullptr && pos != 0);
+	}
 
 	bool isNull() const
 	{
@@ -434,6 +438,8 @@ public:
 	size_t historyPos(const StoredAnchor &anchor) const
 	{
 		Iterator it = find(anchor);
+		if (anchor.pos == anchor.seg->len)
+			return it.position().total;
 		return it.position().total + (anchor.segPos() - it->seg_pos);
 	}
 
@@ -735,6 +741,8 @@ public:
 		if (stored.seg == nullptr)
 			return std::string::npos;
 		auto it = piece_tree.find(stored);
+		if (anchor.pos == stored.seg->len)
+			return it.position().visible;
 		// it.position().visible is the start of the piece, add the pos within the piece
 		return it.position().visible + (stored.segPos() - it->seg_pos);
 	}
@@ -854,10 +862,10 @@ public:
 
 	bool del(const Deletion &op)
 	{
-		if (op.begin == op.end)
+		if (op.range.begin == op.range.end)
 			return false; // no-op
-		auto begin = toStored(op.begin);
-		auto end = toStored(op.end);
+		auto begin = toStored(op.range.begin);
+		auto end = toStored(op.range.end);
 		if (begin.seg == nullptr || end.seg == nullptr)
 			return false; // invalid anchor
 
@@ -1063,7 +1071,7 @@ private:
 			stored_op->replica = target->replica;
 			stored_op->stamp = target->stamp;
 
-			auto begin = StoredAnchor(target, 0);
+			auto begin = StoredAnchor(target, -target->len);
 			auto end = StoredAnchor(target, target->len);
 			auto [left, right] = deletions.apply(
 				RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
@@ -1298,7 +1306,11 @@ private:
 		if (!seg_ptr || seg_ptr->type != OperationType::Insert)
 			return StoredAnchor();
 
-		return StoredAnchor(static_cast<Segment *>(seg_ptr.get()), anchor.pos);
+		Segment *seg = static_cast<Segment *>(seg_ptr.get());
+		if (anchor.pos == 0 || seg->len < std::abs(anchor.pos))
+			return StoredAnchor();
+
+		return StoredAnchor(seg, anchor.pos);
 	}
 
 	template <typename T, typename... Args>

@@ -141,12 +141,11 @@ enum class StyleName : uint8_t
 
 struct Deletion : public Operation
 {
-	Anchor begin;
-	Anchor end;
+	ClosedRange range;
 
 	Deletion() = default;
 	Deletion(const ReplicaID &replica, uint32_t stamp, const Anchor &begin, const Anchor &end)
-		: Operation(replica, stamp, OperationType::Delete), begin(begin), end(end) {}
+		: Operation(replica, stamp, OperationType::Delete), range(begin, end) {}
 };
 
 template <typename T>
