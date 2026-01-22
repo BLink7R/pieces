@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "crdt.hpp"
+#include "format.hpp"
 #include "gb+tree.hpp"
 #include "taggedptr.hpp"
 
@@ -25,7 +26,6 @@ struct StoredDeletion;
 struct Replica
 {
 	ReplicaID id{};
-	// TODO: not correct, need virtual deconstructor
 	// TODO: change to map to save space
 	mutable std::vector<std::unique_ptr<StoredOperation>> operations; // created segments
 
@@ -50,10 +50,10 @@ struct StoredOperation
 {
 	const Replica *replica{nullptr};
 	uint32_t stamp{0};
-	OperationType type;
 
-	StoredOperation(OperationType type)
-		: type(type) {}
+	virtual ~StoredOperation() = default;
+
+	virtual OperationType type() const = 0;
 
 	bool operator<(const StoredOperation &other) const
 	{
@@ -72,14 +72,11 @@ struct UndoRedoableOp : public StoredOperation
 {
 	StoredOperation *undoredo{nullptr}; // newest undo/redo operation
 
-	UndoRedoableOp(OperationType type)
-		: StoredOperation(type) {}
-
 	bool hasUndo() const
 	{
 		if (undoredo == nullptr)
 			return false;
-		return undoredo->type == OperationType::Undo;
+		return undoredo->type() == OperationType::Undo;
 	}
 };
 
@@ -136,7 +133,7 @@ struct Segment : public UndoRedoableOp
 	std::unique_ptr<StoredDeletion> undo_op{nullptr};
 
 	Segment(const std::string &str)
-		: UndoRedoableOp(OperationType::Insert)
+		: UndoRedoableOp()
 	{
 		// TODO: ensure that str.size() <= INT32_MAX
 		data = std::make_unique<const char[]>(str.size() + 1);
@@ -172,7 +169,12 @@ struct Segment : public UndoRedoableOp
 			}
 		}
 	}
-	~Segment() = default;
+	~Segment() override = default;
+
+	OperationType type() const override
+	{
+		return OperationType::Insert;
+	}
 
 	auto pieceAt(int32_t position) const;
 	auto insertPiece(Piece *piece);
@@ -249,26 +251,45 @@ struct StoredRangeOp : public UndoRedoableOp
 	RangeTag *left{nullptr};
 	RangeTag *right{nullptr};
 
-	StoredRangeOp(OperationType type)
-		: UndoRedoableOp(type) {}
+	OperationType type() const override
+	{
+		return OperationType::Format;
+	}
+
+	virtual int styleType() const = 0;
 };
 
 struct StoredDeletion : public StoredRangeOp
 {
-	bool value{true};
+	OperationType type() const override
+	{
+		return OperationType::Delete;
+	}
 
-	StoredDeletion()
-		: StoredRangeOp(OperationType::Delete) {}
+	virtual int styleType() const
+	{
+		return 0;
+	}
 };
 
 template <typename T>
 struct StoredFormat : public StoredRangeOp
 {
-	StyleName key;
+	int key;
 	T value;
 
-	StoredFormat(StyleName key, T value)
-		: StoredRangeOp(OperationType::Format), key(key), value(std::move(value)) {}
+	StoredFormat(int key, T value)
+		: StoredRangeOp(), key(key), value(std::move(value)) {}
+
+	OperationType type() const override
+	{
+		return OperationType::Format;
+	}
+
+	virtual int styleType() const
+	{
+		return key;
+	}
 };
 
 // Undo/redo operations can not be undone/redone again, undo/redo of them
@@ -278,7 +299,12 @@ struct StoredUndo : public StoredOperation
 	UndoRedoableOp *target;
 
 	StoredUndo(UndoRedoableOp *target)
-		: StoredOperation(OperationType::Undo), target(target) {}
+		: StoredOperation(), target(target) {}
+
+	OperationType type() const override
+	{
+		return OperationType::Undo;
+	}
 };
 
 struct StoredRedo : public StoredOperation
@@ -286,7 +312,12 @@ struct StoredRedo : public StoredOperation
 	UndoRedoableOp *target;
 
 	StoredRedo(UndoRedoableOp *target)
-		: StoredOperation(OperationType::Redo), target(target) {}
+		: StoredOperation(), target(target) {}
+
+	OperationType type() const override
+	{
+		return OperationType::Redo;
+	}
 };
 
 struct PieceInfo
@@ -325,6 +356,7 @@ struct Piece
 	int32_t len{0};
 	int32_t seg_pos{0};
 	StoredRangeOp *tombStone{nullptr};
+	Formats styles;
 
 	Piece() = default;
 	Piece(Segment *seg)
@@ -524,7 +556,7 @@ public:
 	}
 };
 
-template <typename T, RangeInterval RightOpen, uint8_t N>
+template <uint8_t N>
 class RangeTree : public OrderedSet<RangeTag, N>
 {
 public:
@@ -553,20 +585,10 @@ protected:
 	{
 		auto piece_it = piece_tree.find(tag.anchor);
 		int32_t pos = tag.anchor.segPos() - piece_it->seg_pos;
-		if constexpr (IsLeft || RightOpen == RangeInterval::Exclusive)
-		{ // reversed anchor, anchor.pos is in [-segment.len, -1]
-			assert(0 < -tag.anchor.pos && tag.anchor.segPos() <= tag.anchor.segPos());
-			if (pos > 0)
-				piece_it = piece_tree.split(piece_it, pos);
-		}
-		else
-		{ // for right closed anchor, anchor.pos is in [1, segment.len]
-			assert(0 < tag.anchor.pos && tag.anchor.pos <= tag.anchor.seg->len);
-			if (pos == piece_it->len)
-				++piece_it;
-			else
-				piece_it = piece_tree.split(piece_it, pos);
-		}
+		if (pos == piece_it->len)
+			++piece_it;
+		else if (pos > 0)
+			piece_it = piece_tree.split(piece_it, pos);
 
 		size_t history_pos = piece_it.position().total;
 
@@ -587,7 +609,7 @@ protected:
 			else
 				return *a.cur < *b.cur;
 		});
-		return std::make_pair(it, piece_it);
+		return it;
 	}
 };
 
@@ -601,7 +623,9 @@ private:
 protected:
 	OrderedSet<Replica, 4> replicas;
 	mutable PieceTree<4> piece_tree;
-	RangeTree<bool, RangeInterval::Inclusive, 4> deletions;
+	RangeTree<4> deletions;
+	std::unordered_map<std::string, int> style_keys;
+	std::unordered_map<int, RangeTree<4>> styles;
 
 public:
 	using Iterator = typename PieceTree<4>::Iterator;
@@ -779,7 +803,7 @@ public:
 				if (!stored)
 					continue;
 
-				switch (stored->type)
+				switch (stored->type())
 				{
 				case OperationType::Insert:
 				{
@@ -860,6 +884,32 @@ public:
 		return true;
 	}
 
+	template <typename RangeType, typename T>
+	bool format(const Formatting<RangeType, T> &op)
+	{
+		auto it = style_keys.find(op.key);
+		if (it == style_keys.end())
+			return false; // unknown style key
+		if (op.range.begin == op.range.end)
+			return false; // no-op
+		auto begin = toStored(op.range.begin);
+		auto end = toStored(op.range.end);
+		if (begin.seg == nullptr || end.seg == nullptr)
+			return false; // invalid anchor
+
+		auto *stored_op = storeOp<StoredFormat<T>>(op.replica, op.stamp, it->second, op.value);
+		if (!stored_op)
+			return false; // duplicate operation
+
+		auto [left_it, right_it] = styles[it->second].apply(
+			RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
+		stored_op->left = &*left_it;
+		stored_op->right = &*right_it;
+
+		redoFormat(stored_op);
+		return true;
+	}
+
 	bool del(const Deletion &op)
 	{
 		if (op.range.begin == op.range.end)
@@ -873,10 +923,8 @@ public:
 		if (!stored_op)
 			return false; // duplicate operation
 
-		auto [left, right] = deletions.apply(
+		auto [left_it, right_it] = deletions.apply(
 			RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
-		auto [left_it, left_piece] = left;
-		auto [right_it, right_piece] = right;
 		stored_op->left = &*left_it;
 		stored_op->right = &*right_it;
 
@@ -894,12 +942,12 @@ public:
 		if (replica_it->operations.size() <= op.target.stamp)
 			return false;
 		StoredOperation *target = replica_it->operations[op.target.stamp].get();
-		if (target->type == OperationType::Undo)
+		if (target->type() == OperationType::Undo)
 		{
 			target = static_cast<StoredUndo *>(target)->target;
 			return redo(RedoOperation(op.replica, op.stamp, OperationID{target->replica->id, target->stamp}));
 		}
-		if (target->type == OperationType::Redo)
+		if (target->type() == OperationType::Redo)
 		{
 			target = static_cast<StoredRedo *>(target)->target;
 		}
@@ -918,12 +966,12 @@ public:
 		if (replica_it->operations.size() <= op.target.stamp)
 			return false;
 		StoredOperation *target = replica_it->operations[op.target.stamp].get();
-		if (target->type == OperationType::Undo)
+		if (target->type() == OperationType::Undo)
 		{
 			target = static_cast<StoredUndo *>(target)->target;
 			return undo(UndoOperation(op.replica, op.stamp, OperationID{target->replica->id, target->stamp}));
 		}
-		if (target->type == OperationType::Redo)
+		if (target->type() == OperationType::Redo)
 		{
 			target = static_cast<StoredRedo *>(target)->target;
 		}
@@ -940,13 +988,16 @@ private:
 		UndoRedoableOp *target = op->target;
 		if (target->undoredo && *op < *target->undoredo)
 			return; // LWW - last write wins
-		switch (target->type)
+		switch (target->type())
 		{
 		case OperationType::Insert:
 			redoInsertion(static_cast<Segment *>(target));
 			break;
 		case OperationType::Delete:
 			redoDel(static_cast<StoredDeletion *>(target));
+			break;
+		case OperationType::Format:
+			redoFormat(static_cast<StoredRangeOp *>(target));
 			break;
 		case OperationType::Undo:
 		case OperationType::Redo:
@@ -963,13 +1014,16 @@ private:
 		UndoRedoableOp *target = op->target;
 		if (target->undoredo && *op < *target->undoredo)
 			return; // LWW - last write wins
-		switch (target->type)
+		switch (target->type())
 		{
 		case OperationType::Insert:
 			undoInsertion(static_cast<Segment *>(target));
 			break;
 		case OperationType::Delete:
 			undoDel(static_cast<StoredDeletion *>(target));
+			break;
+		case OperationType::Format:
+			undoFormat(static_cast<StoredRangeOp *>(target));
 			break;
 		case OperationType::Undo:
 		case OperationType::Redo:
@@ -1057,6 +1111,80 @@ private:
 		piece_tree.update(left_piece, right_piece);
 	}
 
+	void redoFormat(StoredRangeOp *target)
+	{
+		assert(target->left->status == TagStatus::Undone && target->right->status == TagStatus::Undone);
+		auto left_piece = piece_tree.find(target->left->anchor);
+		auto right_piece = piece_tree.find(target->right->anchor);
+		int style_key = target->styleType();
+
+		// Update tag->old for left and right boundary pieces by checking first and last pieces
+		// inside the deletion. We do not check pieces outside the deletion range because it
+		// needs to process the right closed anchor case.
+		{
+			auto piece_before = left_piece;
+			target->left->old.setBad();
+			auto op = piece_before->styles[style_key];
+			assert(op == nullptr || op->right->old.isGood());
+			if (op == nullptr)
+				target->left->old = nullptr;
+			else if (op->left->anchor != target->left->anchor)
+			{
+				if (*op < *target)
+					target->left->old = op;
+			}
+			else if (op->left->old == nullptr || *op->left->old < *target)
+			{
+				assert(op->left->status == TagStatus::Active && "tombStone should be Active");
+				target->left->old = op->left->old;
+			}
+		}
+		{
+			auto piece_after = right_piece;
+			target->right->old.setBad();
+			auto op = piece_after->styles[style_key];
+			assert(op == nullptr || op->left->old.isGood());
+			if (op == nullptr)
+				target->right->old = nullptr;
+			else if (op->right->anchor != target->right->anchor)
+			{
+				if (*op < *target)
+					target->right->old = op;
+			}
+			else if (op->right->old == nullptr || *op->right->old < *target)
+			{
+				assert(op->right->status == TagStatus::Active && "tombStone should be Active");
+				target->right->old = op->right->old;
+			}
+		}
+
+		redoRangeOp(target, [style_key](Piece *piece, StoredRangeOp *op)
+		{
+			if (piece->styles[style_key] == nullptr || *piece->styles[style_key] < *op)
+				piece->styles.set(style_key, op);
+		});
+	}
+
+	void undoFormat(StoredRangeOp *target)
+	{
+		int style_key = target->styleType();
+
+		auto ops_covered = undoRangeOp(target, [target, style_key](Piece *piece, StoredRangeOp *newest)
+		{
+			if (piece->styles[style_key] == target)
+				piece->styles.set(style_key, newest);
+		});
+
+		for (auto ops : ops_covered)
+		{
+			redoRangeOp(ops, [style_key](Piece *piece, StoredRangeOp *op)
+			{
+				if (piece->styles[style_key] == nullptr || *piece->styles[style_key] < *op)
+					piece->styles.set(style_key, op);
+			});
+		}
+	}
+
 	void redoInsertion(Segment *target)
 	{
 		if (target->undo_op != nullptr)
@@ -1073,10 +1201,8 @@ private:
 
 			auto begin = StoredAnchor(target, -target->len);
 			auto end = StoredAnchor(target, target->len);
-			auto [left, right] = deletions.apply(
+			auto [left_it, right_it] = deletions.apply(
 				RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
-			auto [left_it, left_piece] = left;
-			auto [right_it, right_piece] = right;
 			stored_op->left = &*left_it;
 			stored_op->right = &*right_it;
 
@@ -1089,8 +1215,8 @@ private:
 	template <typename UpdateFunc>
 	void redoRangeOp(StoredRangeOp *stored_op, const UpdateFunc &updateFunc)
 	{
-		auto left_it = decltype(deletions)::Iterator(stored_op->left);
-		auto right_it = decltype(deletions)::Iterator(stored_op->right);
+		auto left_it = typename RangeTree<4>::Iterator(stored_op->left);
+		auto right_it = typename RangeTree<4>::Iterator(stored_op->right);
 
 		auto begin_piece = piece_tree.find(stored_op->left->anchor);
 		auto end_piece = piece_tree.find(stored_op->right->anchor);
@@ -1188,8 +1314,8 @@ private:
 	template <typename UpdateFunc>
 	std::vector<StoredRangeOp *> undoRangeOp(StoredRangeOp *stored_op, const UpdateFunc &updateFunc)
 	{
-		auto left_it = decltype(deletions)::Iterator(stored_op->left);
-		auto right_it = decltype(deletions)::Iterator(stored_op->right);
+		auto left_it = RangeTree<4>::Iterator(stored_op->left);
+		auto right_it = RangeTree<4>::Iterator(stored_op->right);
 
 		if (left_it->status == TagStatus::UnUsed || right_it->status == TagStatus::UnUsed)
 		{
@@ -1303,7 +1429,7 @@ private:
 			return StoredAnchor();
 
 		auto &seg_ptr = replica->operations[anchor.stamp];
-		if (!seg_ptr || seg_ptr->type != OperationType::Insert)
+		if (!seg_ptr || seg_ptr->type() != OperationType::Insert)
 			return StoredAnchor();
 
 		Segment *seg = static_cast<Segment *>(seg_ptr.get());

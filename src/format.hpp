@@ -7,7 +7,7 @@
 
 #include "crdt.hpp"
 
-class StoredRangeOp;
+struct StoredRangeOp;
 class Formats;
 
 namespace
@@ -26,20 +26,20 @@ private:
 	{
 	}
 
-	StyleName *styleNames()
+	int *styleNames()
 	{
-		return reinterpret_cast<StyleName *>(raw);
+		return reinterpret_cast<int *>(raw);
 	}
 
-	const StyleName *styleNames() const
+	const int *styleNames() const
 	{
-		return reinterpret_cast<const StyleName *>(raw);
+		return reinterpret_cast<const int *>(raw);
 	}
 
 	StoredRangeOp **formatOps()
 	{
 		constexpr std::size_t align = alignof(StoredRangeOp *);
-		std::size_t names_bytes = count * sizeof(StyleName);
+		std::size_t names_bytes = count * sizeof(int);
 		std::size_t padding = (align - (names_bytes % align)) % align;
 		return reinterpret_cast<StoredRangeOp **>(raw + names_bytes + padding);
 	}
@@ -47,7 +47,7 @@ private:
 	StoredRangeOp *const *formatOps() const
 	{
 		constexpr std::size_t align = alignof(StoredRangeOp *);
-		std::size_t names_bytes = count * sizeof(StyleName);
+		std::size_t names_bytes = count * sizeof(int);
 		std::size_t padding = (align - (names_bytes % align)) % align;
 		return reinterpret_cast<StoredRangeOp *const *>(raw + names_bytes + padding);
 	}
@@ -66,7 +66,7 @@ inline FormatArray *createFormatArray(std::size_t count)
 	// 3. padding to align pointer array
 	// 4. `count` pointers to format operations
 	constexpr std::size_t align = alignof(StoredRangeOp *);
-	std::size_t names_bytes = count * sizeof(StyleName);
+	std::size_t names_bytes = count * sizeof(int);
 	std::size_t padding = (align - (names_bytes % align)) % align;
 	std::size_t ops_bytes = count * sizeof(StoredRangeOp *);
 	std::size_t total_bytes = sizeof(FormatArray) + names_bytes + padding + ops_bytes;
@@ -101,10 +101,10 @@ class Formats
 private:
 	FormatArray *formats{nullptr};
 
-	static std::vector<std::pair<StyleName, StoredRangeOp *>>
+	static std::vector<std::pair<int, StoredRangeOp *>>
 	toVector(const FormatArray *fa)
 	{
-		std::vector<std::pair<StyleName, StoredRangeOp *>> result;
+		std::vector<std::pair<int, StoredRangeOp *>> result;
 		if (!fa)
 			return result;
 		result.reserve(fa->count);
@@ -115,7 +115,7 @@ private:
 		return result;
 	}
 
-	void assign(std::vector<std::pair<StyleName, StoredRangeOp *>> style_ops)
+	void assign(std::vector<std::pair<int, StoredRangeOp *>> style_ops)
 	{
 		if (style_ops.empty())
 		{
@@ -143,7 +143,7 @@ private:
 public:
 	Formats() = default;
 
-	explicit Formats(std::vector<std::pair<StyleName, StoredRangeOp *>> style_ops)
+	explicit Formats(std::vector<std::pair<int, StoredRangeOp *>> style_ops)
 	{
 		assign(std::move(style_ops));
 	}
@@ -195,7 +195,7 @@ public:
 		return formats ? formats->count : 0;
 	}
 
-	StoredRangeOp *get(StyleName name) const
+	StoredRangeOp *get(int name) const
 	{
 		if (!formats)
 			return nullptr;
@@ -207,12 +207,12 @@ public:
 		return nullptr;
 	}
 
-	bool has(StyleName name) const
+	bool has(int name) const
 	{
 		return get(name) != nullptr;
 	}
 
-	StoredRangeOp *operator[](StyleName name) const
+	StoredRangeOp *operator[](int name) const
 	{
 		return get(name);
 	}
@@ -222,7 +222,7 @@ public:
 		releaseFormatArray(formats);
 	}
 
-	void set(StyleName name, StoredRangeOp *op)
+	void set(int name, StoredRangeOp *op)
 	{
 		auto style_ops = toVector(formats);
 		auto it = std::find_if(style_ops.begin(), style_ops.end(),
@@ -247,12 +247,12 @@ public:
 		assign(std::move(style_ops));
 	}
 
-	void remove(StyleName name)
+	void remove(int name)
 	{
 		set(name, nullptr);
 	}
 
-	void add(std::vector<std::pair<StyleName, StoredRangeOp *>> style_ops)
+	void add(std::vector<std::pair<int, StoredRangeOp *>> style_ops)
 	{
 		auto current = toVector(formats);
 		current.insert(current.end(),
@@ -261,7 +261,7 @@ public:
 		assign(std::move(current));
 	}
 
-	std::vector<std::pair<StyleName, StoredRangeOp *>> toVector() const
+	std::vector<std::pair<int, StoredRangeOp *>> toVector() const
 	{
 		return toVector(formats);
 	}

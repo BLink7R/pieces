@@ -249,7 +249,7 @@ public:
 		{
 			for (const auto &op : replica.operations)
 			{
-				if (op && op->type == OperationType::Delete)
+				if (op && op->type() == OperationType::Delete)
 				{
 					auto *del = static_cast<StoredDeletion *>(op.get());
 					// 如果删除操作已被撤销，则不计入

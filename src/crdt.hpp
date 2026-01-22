@@ -126,19 +126,6 @@ enum class RangeInterval : uint8_t
 	Exclusive,
 };
 
-enum class StyleName : uint8_t
-{
-	Hidden,
-	Bold,
-	Italic,
-	Underline,
-	Strikethrough,
-	FontSize,
-	FontFamily,
-	Color,
-	BackgroundColor,
-};
-
 struct Deletion : public Operation
 {
 	ClosedRange range;
@@ -148,17 +135,16 @@ struct Deletion : public Operation
 		: Operation(replica, stamp, OperationType::Delete), range(begin, end) {}
 };
 
-template <typename T>
+template <typename RangeType, typename T>
 struct Formatting : public Operation
 {
-	Anchor begin;
-	Anchor end;
-	StyleName Key;
+	RangeType range;
+	std::string key;
 	T value;
 
 	Formatting() = default;
 	Formatting(const ReplicaID &replica, uint32_t stamp, const Anchor &begin, const Anchor &end)
-		: Operation(replica, stamp, OperationType::Format), begin(begin), end(end) {}
+		: Operation(replica, stamp, OperationType::Format), range(begin, end) {}
 };
 
 // one replica can only undo/redo its operation, so only one stamp is needed.
