@@ -267,7 +267,7 @@ struct StoredDeletion : public StoredRangeOp
 		return OperationType::Delete;
 	}
 
-	virtual int styleType() const
+	int styleType() const override
 	{
 		return 0;
 	}
@@ -287,7 +287,7 @@ struct StoredFormat : public StoredRangeOp
 		return OperationType::Format;
 	}
 
-	virtual int styleType() const
+	int styleType() const override
 	{
 		return key;
 	}
@@ -769,6 +769,8 @@ public:
 		if (stored.seg == nullptr)
 			return std::string::npos;
 		auto it = piece_tree.find(stored);
+		if (it->isRemoved())
+			return it.position().visible;
 		// it.position().visible is the start of the piece, add the pos within the piece
 		return it.position().visible + (stored.segPos() - it->seg_pos);
 	}
