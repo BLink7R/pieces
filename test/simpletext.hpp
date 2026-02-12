@@ -206,7 +206,7 @@ public:
 
 // A simple format provider for tests, mapping style name -> integer key
 // and recording the last int value applied for each style.
-class TextFormatProvider
+class TestFormatProvider
 {
 private:
 	struct StyleInfo
@@ -231,7 +231,7 @@ private:
 	}
 
 public:
-	TextFormatProvider() = default;
+	TestFormatProvider() = default;
 
 	// Explicitly register a style name and get its numeric key.
 	static int addStyle(const std::string &name)
@@ -308,6 +308,7 @@ public:
 class PieceCRDTValidator : public PieceCRDT<void>
 {
 public:
+	// closed range for history index
 	ClosedRange historyRange(size_t start, size_t end)
 	{
 		Iterator it_begin = piece_tree.findHistory(start);
@@ -383,9 +384,9 @@ public:
 			}
 		}
 		bool valid = reconstructed == toString();
-		std::cout << "PieceCRDTValidator: content " << (valid ? "matches" : "differs")
-				  << ", expected size " << reconstructed.size()
-				  << ", actual size " << size() << "\n";
+		// std::cout << "PieceCRDTValidator: content " << (valid ? "matches" : "differs")
+		// 		  << ", expected size " << reconstructed.size()
+		// 		  << ", actual size " << size() << "\n";
 		// std::cout << "PieceCRDTValidator: expect content \"" << reconstructed << "\"\n";
 		// std::cout << "PieceCRDTValidator: actual content \"" << toString() << "\"\n";
 		return valid;

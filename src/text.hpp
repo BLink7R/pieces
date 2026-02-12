@@ -103,6 +103,7 @@ public:
 	// basic information
 	size_t size() const;
 	bool empty() const;
+	FormatProvider &formatProvider() const;
 
 	// export
 	std::string toString() const;
@@ -121,7 +122,9 @@ public:
 	size_t del(size_t begin, size_t end);
 	size_t del(const ClosedRange &range);
 	template <typename RangeType, typename T>
-	size_t format(RangeType range, const std::string &style_name, const T &value = {});
+	size_t format(const std::string &style_name, size_t begin, size_t end, const T &value = {});
+	template <typename RangeType, typename T>
+	size_t format(const std::string &style_name, RangeType range, const T &value = {});
 
 	// index conversion
 	OpenedRange toOpenedRange(size_t begin, size_t end) const;
@@ -166,6 +169,12 @@ template <typename FormatProvider>
 bool RichText<FormatProvider>::empty() const
 {
 	return doc.size() == 0;
+}
+
+template <typename FormatProvider>
+FormatProvider &RichText<FormatProvider>::formatProvider() const
+{
+	return doc.formatProvider();
 }
 
 template <typename FormatProvider>
@@ -230,9 +239,28 @@ size_t RichText<FormatProvider>::del(const ClosedRange &range)
 
 template <typename FormatProvider>
 template <typename RangeType, typename T>
-size_t RichText<FormatProvider>::format(RangeType range, const std::string &style_name, const T &value)
+size_t RichText<FormatProvider>::format(const std::string &style_name, size_t begin, size_t end, const T &value)
 {
-	Formatting<RangeType, T> op{.range = range, .key = style_name, .value = value};
+	if constexpr (std::is_same_v<RangeType, ClosedRange>)
+	{
+		return format(style_name, toClosedRange(begin, end), value);
+	}
+	else if constexpr (std::is_same_v<RangeType, OpenedRange>)
+	{
+		return format(style_name, toOpenedRange(begin, end), value);
+	}
+	else
+	{
+		static_assert(false, "Unsupported RangeType");
+		return 0;
+	}
+}
+
+template <typename FormatProvider>
+template <typename RangeType, typename T>
+size_t RichText<FormatProvider>::format(const std::string &style_name, RangeType range, const T &value)
+{
+	Formatting<RangeType, T> op(doc.id(), doc.stamp(), style_name, range.begin, range.end, value);
 	if (!doc.format(op))
 		return 0; // invalid style or no-op
 	auto frontline_ids = doc.frontline();

@@ -143,8 +143,8 @@ struct Formatting : public Operation
 	T value;
 
 	Formatting() = default;
-	Formatting(const ReplicaID &replica, uint32_t stamp, const Anchor &begin, const Anchor &end)
-		: Operation(replica, stamp, OperationType::Format), range(begin, end) {}
+	Formatting(const ReplicaID &replica, uint32_t stamp, std::string key, const Anchor &begin, const Anchor &end, T value)
+		: Operation(replica, stamp, OperationType::Format), key(std::move(key)), range(begin, end), value(std::move(value)) {}
 };
 
 // one replica can only undo/redo its operation, so only one stamp is needed.

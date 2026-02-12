@@ -471,8 +471,6 @@ public:
 	size_t historyPos(const StoredAnchor &anchor) const
 	{
 		Iterator it = find(anchor);
-		if (anchor.pos == anchor.seg->len)
-			return it.position().total;
 		return it.position().total + (anchor.segPos() - it->seg_pos);
 	}
 
@@ -771,8 +769,6 @@ public:
 		if (stored.seg == nullptr)
 			return std::string::npos;
 		auto it = piece_tree.find(stored);
-		if (anchor.pos == stored.seg->len)
-			return it.position().visible;
 		// it.position().visible is the start of the piece, add the pos within the piece
 		return it.position().visible + (stored.segPos() - it->seg_pos);
 	}
@@ -890,7 +886,7 @@ public:
 		return true;
 	}
 
-	auto getFormatProvider()
+	auto &formatProvider()
 		requires(!std::is_same_v<FormatProvider, void>)
 	{
 		return format_provider;
@@ -1136,9 +1132,8 @@ private:
 	{
 		assert(target->left->status == TagStatus::Undone && target->right->status == TagStatus::Undone);
 		int style_key = target->styleType();
-		auto style_tree = format_provider.style(style_key);
-		auto left_piece = style_tree.find(target->left->anchor);
-		auto right_piece = style_tree.find(target->right->anchor);
+		auto left_piece = piece_tree.find(target->left->anchor);
+		auto right_piece = piece_tree.find(target->right->anchor);
 
 		// Update tag->old for left and right boundary pieces by checking first and last pieces
 		// inside the deletion. We do not check pieces outside the deletion range because it
