@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstddef>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <tuple>
 #include <unordered_set>
@@ -613,8 +614,14 @@ protected:
 	}
 };
 
+template <typename FormatProvider = void>
 class PieceCRDT
 {
+	struct Empty
+	{
+	};
+	using Format = std::conditional_t<std::is_same_v<FormatProvider, void>, Empty, FormatProvider>;
+
 private:
 	uint32_t lamport_stamp;
 	const ReplicaID local_id;
@@ -624,8 +631,7 @@ protected:
 	OrderedSet<Replica, 4> replicas;
 	mutable PieceTree<4> piece_tree;
 	RangeTree<4> deletions;
-	std::unordered_map<std::string, int> style_keys;
-	std::unordered_map<int, RangeTree<4>> styles;
+	Format format_provider;
 
 public:
 	using Iterator = typename PieceTree<4>::Iterator;
@@ -884,12 +890,19 @@ public:
 		return true;
 	}
 
+	auto getFormatProvider()
+		requires(!std::is_same_v<FormatProvider, void>)
+	{
+		return format_provider;
+	}
+
 	template <typename RangeType, typename T>
 	bool format(const Formatting<RangeType, T> &op)
+		requires(!std::is_same_v<FormatProvider, void>)
 	{
-		auto it = style_keys.find(op.key);
-		if (it == style_keys.end())
-			return false; // unknown style key
+		int style_key = format_provider.styleKey(op);
+		if (style_key < 0)
+			return false; // invalid style
 		if (op.range.begin == op.range.end)
 			return false; // no-op
 		auto begin = toStored(op.range.begin);
@@ -897,11 +910,12 @@ public:
 		if (begin.seg == nullptr || end.seg == nullptr)
 			return false; // invalid anchor
 
-		auto *stored_op = storeOp<StoredFormat<T>>(op.replica, op.stamp, it->second, op.value);
+		auto *stored_op = storeOp<StoredFormat<T>>(op.replica, op.stamp, style_key, op.value);
 		if (!stored_op)
 			return false; // duplicate operation
 
-		auto [left_it, right_it] = styles[it->second].apply(
+		auto style_tree = format_provider.style(stored_op->key);
+		auto [left_it, right_it] = style_tree.apply(
 			RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
 		stored_op->left = &*left_it;
 		stored_op->right = &*right_it;
@@ -997,7 +1011,10 @@ private:
 			redoDel(static_cast<StoredDeletion *>(target));
 			break;
 		case OperationType::Format:
-			redoFormat(static_cast<StoredRangeOp *>(target));
+			if constexpr (!std::is_same_v<FormatProvider, void>)
+				redoFormat(static_cast<StoredRangeOp *>(target));
+			else
+				assert(false && "format operation is not supported");
 			break;
 		case OperationType::Undo:
 		case OperationType::Redo:
@@ -1023,7 +1040,10 @@ private:
 			undoDel(static_cast<StoredDeletion *>(target));
 			break;
 		case OperationType::Format:
-			undoFormat(static_cast<StoredRangeOp *>(target));
+			if constexpr (!std::is_same_v<FormatProvider, void>)
+				undoFormat(static_cast<StoredRangeOp *>(target));
+			else
+				assert(false && "format operation is not supported");
 			break;
 		case OperationType::Undo:
 		case OperationType::Redo:
@@ -1112,11 +1132,13 @@ private:
 	}
 
 	void redoFormat(StoredRangeOp *target)
+		requires(!std::is_same_v<FormatProvider, void>)
 	{
 		assert(target->left->status == TagStatus::Undone && target->right->status == TagStatus::Undone);
-		auto left_piece = piece_tree.find(target->left->anchor);
-		auto right_piece = piece_tree.find(target->right->anchor);
 		int style_key = target->styleType();
+		auto style_tree = format_provider.style(style_key);
+		auto left_piece = style_tree.find(target->left->anchor);
+		auto right_piece = style_tree.find(target->right->anchor);
 
 		// Update tag->old for left and right boundary pieces by checking first and last pieces
 		// inside the deletion. We do not check pieces outside the deletion range because it
@@ -1166,6 +1188,7 @@ private:
 	}
 
 	void undoFormat(StoredRangeOp *target)
+		requires(!std::is_same_v<FormatProvider, void>)
 	{
 		int style_key = target->styleType();
 
@@ -1211,7 +1234,6 @@ private:
 		redoDel(target->undo_op.get());
 	}
 
-	// won't update tag->old if it is not nullptr
 	template <typename UpdateFunc>
 	void redoRangeOp(StoredRangeOp *stored_op, const UpdateFunc &updateFunc)
 	{

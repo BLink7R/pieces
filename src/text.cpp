@@ -1,5 +1,10 @@
 #include "text.hpp"
 
+namespace {
+	constexpr uint32_t kGroupStart = std::numeric_limits<uint32_t>::max();
+	constexpr uint32_t kGroupEnd = std::numeric_limits<uint32_t>::max() - 1;
+}
+
 size_t PlainText::size() const { return doc.size(); }
 
 bool PlainText::empty() const { return doc.size() == 0; }
@@ -78,6 +83,16 @@ size_t PlainText::toPos(const Anchor &anchor) const
 	return doc.pos(anchor);
 }
 
+void PlainText::beginGroup()
+{
+	undo_stack.push(kGroupStart);
+}
+
+void PlainText::endGroup()
+{
+	undo_stack.push(kGroupEnd);
+}
+
 bool PlainText::canUndo() const { return !undo_stack.empty(); }
 
 bool PlainText::canRedo() const { return !redo_stack.empty(); }
@@ -86,24 +101,96 @@ void PlainText::undo()
 {
 	if (undo_stack.empty())
 		return;
+
 	uint32_t target = undo_stack.top();
 	undo_stack.pop();
 
-	UndoOperation op(doc.id(), doc.stamp(), OperationID{doc.id(), target});
-	doc.undo(op);
-	redo_stack.push(target);
+	if (target == kGroupEnd)
+	{
+		redo_stack.push(kGroupEnd);
+		int balance = 1;
+		while (balance > 0 && !undo_stack.empty())
+		{
+			uint32_t item = undo_stack.top();
+			undo_stack.pop();
+
+			if (item == kGroupEnd)
+			{
+				balance++;
+				redo_stack.push(item);
+			}
+			else if (item == kGroupStart)
+			{
+				balance--;
+				redo_stack.push(item);
+			}
+			else
+			{
+				UndoOperation op(doc.id(), doc.stamp(), OperationID{doc.id(), item});
+				doc.undo(op);
+				redo_stack.push(item);
+			}
+		}
+	}
+	else if (target == kGroupStart)
+	{
+		// Should generally not be the top-level operation unless undoing an open group or mismatched group.
+		// Behave safely by just moving it to redo.
+		redo_stack.push(target);
+	}
+	else
+	{
+		UndoOperation op(doc.id(), doc.stamp(), OperationID{doc.id(), target});
+		doc.undo(op);
+		redo_stack.push(target);
+	}
 }
 
 void PlainText::redo()
 {
 	if (redo_stack.empty())
 		return;
+
 	uint32_t target = redo_stack.top();
 	redo_stack.pop();
 
-	RedoOperation op(doc.id(), doc.stamp(), OperationID{doc.id(), target});
-	doc.redo(op);
-	undo_stack.push(target);
+	if (target == kGroupStart)
+	{
+		undo_stack.push(kGroupStart);
+		int balance = 1;
+		while (balance > 0 && !redo_stack.empty())
+		{
+			uint32_t item = redo_stack.top();
+			redo_stack.pop();
+
+			if (item == kGroupStart)
+			{
+				balance++;
+				undo_stack.push(item);
+			}
+			else if (item == kGroupEnd)
+			{
+				balance--;
+				undo_stack.push(item);
+			}
+			else
+			{
+				RedoOperation op(doc.id(), doc.stamp(), OperationID{doc.id(), item});
+				doc.redo(op);
+				undo_stack.push(item);
+			}
+		}
+	}
+	else if (target == kGroupEnd)
+	{
+		undo_stack.push(target);
+	}
+	else
+	{
+		RedoOperation op(doc.id(), doc.stamp(), OperationID{doc.id(), target});
+		doc.redo(op);
+		undo_stack.push(target);
+	}
 }
 
 size_t PlainText::undoSpecific(OperationID opID)

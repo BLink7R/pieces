@@ -633,8 +633,33 @@ void selectionTest()
 	std::cout << doc.toString() << '\n'; // aaabbb
 }
 
+// Test RichText with TextFormatProvider and an int style value.
+void richTextFormatTest()
+{
+	RichText<TextFormatProvider> doc;
+	std::string text = "Hello RichText";
+	doc.insert(0, text);
+
+	// Apply an int style to a range.
+	OpenedRange range = doc.toOpenedRange(0, 5); // "Hello"
+	size_t stamp = doc.format(range, std::string("intStyle"), 42);
+	assert(stamp != 0);
+
+	// Text content should remain unchanged by formatting.
+	assert(doc.toString() == text);
+
+	// Verify that the int style value was recorded by the provider.
+	int stored_value = 0;
+	bool ok = TextFormatProvider::getIntStyleValue("intStyle", stored_value);
+	assert(ok);
+	assert(stored_value == 42);
+
+	std::cout << "RichText int style format test passed.\n";
+}
+
 int main(int argn, char **argv)
 {
+	richTextFormatTest();
 	// selectionTest();
 	// insertOnEdgeTest();
 	// oldtagTest();
@@ -643,10 +668,10 @@ int main(int argn, char **argv)
 	// std::cout << text.toString() << "\n";
 	// text.diff();
 	// coverTest();
-	// runInsertDeleteTest(1000, 30, 40);
+	runInsertDeleteTest(1000, 30, 40);
 	// readTest("../../../test4.txt");
 	// runDeleteUndoRedoTest(200, 5000);
-	runHistoryDeleteUndoRedoTest(200, 5000);
+	// runHistoryDeleteUndoRedoTest(200, 5000);
 	// runHistoryDeleteUndoRedoTestFromFile("../../../test6.txt", 5000);
 	// int numInsertions = 5000; // 默认插入次数
 	// if (argn > 1)

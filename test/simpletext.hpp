@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <iostream>
 #include <string>
+#include <unordered_map>
+#include <type_traits>
 #include <vector>
 
 #include "piecetree.hpp"
@@ -202,7 +204,108 @@ public:
 	}
 };
 
-class PieceCRDTValidator : public PieceCRDT
+// A simple format provider for tests, mapping style name -> integer key
+// and recording the last int value applied for each style.
+class TextFormatProvider
+{
+private:
+	struct StyleInfo
+	{
+		int key;
+		std::string name;
+		RangeTree<4> tree;
+		int last_int_value{0};
+		bool has_int_value{false};
+	};
+
+	static std::vector<StyleInfo> &styles()
+	{
+		static std::vector<StyleInfo> s;
+		return s;
+	}
+
+	static std::unordered_map<std::string, int> &name_to_key()
+	{
+		static std::unordered_map<std::string, int> m;
+		return m;
+	}
+
+public:
+	TextFormatProvider() = default;
+
+	// Explicitly register a style name and get its numeric key.
+	static int addStyle(const std::string &name)
+	{
+		auto &m = name_to_key();
+		auto &vec = styles();
+		auto it = m.find(name);
+		if (it != m.end())
+			return it->second;
+		int key = static_cast<int>(vec.size());
+		vec.push_back(StyleInfo{key, name, RangeTree<4>{}, 0, false});
+		m.emplace(name, key);
+		return key;
+	}
+
+	// For tests: read back the last int value applied to a style.
+	static bool getIntStyleValue(const std::string &name, int &out)
+	{
+		auto &m = name_to_key();
+		auto &vec = styles();
+		auto it = m.find(name);
+		if (it == m.end())
+			return false;
+		const StyleInfo &info = vec[static_cast<std::size_t>(it->second)];
+		if (!info.has_int_value)
+			return false;
+		out = info.last_int_value;
+		return true;
+	}
+
+	// Called by PieceCRDT::format to map style name to integer key.
+	template <typename RangeType, typename T>
+	int styleKey(const Formatting<RangeType, T> &op)
+	{
+		auto &m = name_to_key();
+		auto &vec = styles();
+		int key;
+		auto it = m.find(op.key);
+		if (it == m.end())
+		{
+			key = static_cast<int>(vec.size());
+			vec.push_back(StyleInfo{key, op.key, RangeTree<4>{}, 0, false});
+			m.emplace(op.key, key);
+		}
+		else
+		{
+			key = it->second;
+		}
+
+		if constexpr (std::is_same_v<T, int>)
+		{
+			StyleInfo &info = vec[static_cast<std::size_t>(key)];
+			info.last_int_value = op.value;
+			info.has_int_value = true;
+		}
+
+		return key;
+	}
+
+	// Access the RangeTree for a given style key.
+	RangeTree<4> &style(int key)
+	{
+		auto &vec = styles();
+		return vec[static_cast<std::size_t>(key)].tree;
+	}
+
+	const RangeTree<4> &style(int key) const
+	{
+		auto &vec = styles();
+		return vec[static_cast<std::size_t>(key)].tree;
+	}
+};
+
+class PieceCRDTValidator : public PieceCRDT<void>
 {
 public:
 	ClosedRange historyRange(size_t start, size_t end)
