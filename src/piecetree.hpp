@@ -681,6 +681,11 @@ public:
 		return piece_tree.end();
 	}
 
+	Iterator find(size_t pos) const
+	{
+		return piece_tree.upper_bound(pos);
+	}
+
 	auto size() const
 	{
 		return (--piece_tree.end()).position().visible;
@@ -866,6 +871,12 @@ public:
 			return undo(static_cast<const UndoOperation &>(op));
 		case OperationType::Redo:
 			return redo(static_cast<const RedoOperation &>(op));
+		case OperationType::Format:
+			if constexpr (!std::is_same_v<FormatProvider, void>)
+				return format_provider.apply(this, op);
+			else
+				return false;
+			break;
 		default:
 			return false;
 		}
@@ -894,11 +905,24 @@ public:
 		return format_provider;
 	}
 
+	template <typename T>
+	T style(Iterator it, std::string style_name) const
+		requires(!std::is_same_v<FormatProvider, void>)
+	{
+		int style_key = format_provider.styleKey(style_name);
+		if (style_key < 0)
+			return T{};
+		StoredRangeOp *op = it->styles[style_key];
+		if (op == nullptr)
+			return format_provider.template getDefaultValue<T>(style_name);
+		return static_cast<StoredFormat<T> *>(op)->value;
+	}
+
 	template <typename RangeType, typename T>
 	bool format(const Formatting<RangeType, T> &op)
 		requires(!std::is_same_v<FormatProvider, void>)
 	{
-		int style_key = format_provider.styleKey(op);
+		int style_key = format_provider.styleKey(op.key);
 		if (style_key < 0)
 			return false; // invalid style
 		if (op.range.begin == op.range.end)
@@ -1115,6 +1139,7 @@ private:
 				piece->tombStone = static_cast<StoredRangeOp *>(newest);
 		});
 
+		// the `old` tag is already updated in `undoRangeOp`, so directly call `redoRangeOp`
 		for (auto ops : ops_covered)
 		{
 			redoRangeOp(ops, [](Piece *piece, StoredRangeOp *op)
@@ -1177,11 +1202,24 @@ private:
 			}
 		}
 
-		redoRangeOp(target, [style_key](Piece *piece, StoredRangeOp *op)
+		std::multimap<void *, Piece *> cache;
+		redoRangeOp(target, [style_key, &cache](Piece *piece, StoredRangeOp *op)
 		{
 			if (piece->styles[style_key] == nullptr || *piece->styles[style_key] < *op)
-				piece->styles.set(style_key, op);
+				cache.insert({piece->styles.raw(), piece});
 		});
+		for (auto it = cache.begin(); it != cache.end();)
+		{
+			auto range = cache.equal_range(it->first);
+			Piece *first_piece = range.first->second;
+			Formats new_formats = first_piece->styles;
+			new_formats.set(style_key, target);
+			for (auto jt = range.first; jt != range.second; ++jt)
+			{
+				jt->second->styles = new_formats;
+			}
+			it = range.second;
+		}
 	}
 
 	void undoFormat(StoredRangeOp *target)
@@ -1189,19 +1227,47 @@ private:
 	{
 		int style_key = target->styleType();
 
-		auto ops_covered = undoRangeOp(target, [target, style_key](Piece *piece, StoredRangeOp *newest)
+		std::multimap<std::pair<void *, StoredRangeOp *>, Piece *> cache;
+		auto ops_covered = undoRangeOp(target, [target, style_key, &cache](Piece *piece, StoredRangeOp *newest)
 		{
 			if (piece->styles[style_key] == target)
-				piece->styles.set(style_key, newest);
+				cache.insert({{piece->styles.raw(), newest}, piece});
 		});
-
-		for (auto ops : ops_covered)
+		for (auto it = cache.begin(); it != cache.end();)
 		{
-			redoRangeOp(ops, [style_key](Piece *piece, StoredRangeOp *op)
+			auto range = cache.equal_range(it->first);
+			StoredRangeOp *newest_op = it->first.second;
+			Piece *first_piece = range.first->second;
+			Formats new_formats = first_piece->styles;
+			new_formats.set(style_key, newest_op);
+			for (auto jt = range.first; jt != range.second; ++jt)
+			{
+				Piece *piece = jt->second;
+				piece->styles = new_formats;
+			}
+			it = range.second;
+		}
+
+		for (auto op : ops_covered)
+		{
+			std::multimap<void *, Piece *> cache;
+			redoRangeOp(op, [style_key, &cache](Piece *piece, StoredRangeOp *op)
 			{
 				if (piece->styles[style_key] == nullptr || *piece->styles[style_key] < *op)
-					piece->styles.set(style_key, op);
+					cache.insert({piece->styles.raw(), piece});
 			});
+			for (auto it = cache.begin(); it != cache.end();)
+			{
+				auto range = cache.equal_range(it->first);
+				Piece *first_piece = range.first->second;
+				Formats new_formats = first_piece->styles;
+				new_formats.set(style_key, op);
+				for (auto jt = range.first; jt != range.second; ++jt)
+				{
+					jt->second->styles = new_formats;
+				}
+				it = range.second;
+			}
 		}
 	}
 
@@ -1278,9 +1344,9 @@ private:
 			// case 2: fully covered by other operations
 			else
 			{
-				// this can happen when it has a common begin/end with other ops
-				// TODO: we can apply it instead of marking UnUsed
+				// assert below can be false when it has a common begin/end with other ops
 				// assert(left_it->old.isBad() && right_it->old.isBad());
+				// TODO: we can apply it instead of marking UnUsed
 				left_it->status = right_it->status = TagStatus::UnUsed;
 			}
 			return;
@@ -1390,6 +1456,8 @@ private:
 					unused_ops.insert(tag->cur);
 					if (newest == nullptr || *newest < *tag->cur)
 						tag->old = newest;
+					// an op with left and right tags both older than newest can still be newer than newest in middle
+					// so all unused tags should be recorded
 					else
 						tag->old.setBad();
 					continue;
@@ -1418,7 +1486,7 @@ private:
 			}
 		}
 
-		// try to apply all covered ops, from newest to oldest
+		// covered ops must be done from newest to oldest, as redoing older op can affect the `old` tag
 		std::sort(ops_covered.begin(), ops_covered.end(),
 				  [](StoredRangeOp *a, StoredRangeOp *b)
 		{

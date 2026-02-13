@@ -185,6 +185,11 @@ public:
 		releaseFormatArray(formats);
 	}
 
+	void *raw() const
+	{
+		return formats;
+	}
+
 	bool empty() const
 	{
 		return !formats || formats->count == 0;
@@ -223,7 +228,7 @@ public:
 	}
 
 	void set(int name, StoredRangeOp *op)
-	{
+	{ // TODO: modify when ref count == 1
 		auto style_ops = toVector(formats);
 		auto it = std::find_if(style_ops.begin(), style_ops.end(),
 							   [name](const auto &p)

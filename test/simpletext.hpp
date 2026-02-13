@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <iostream>
 #include <string>
-#include <unordered_map>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #include "piecetree.hpp"
@@ -213,95 +213,58 @@ private:
 	{
 		int key;
 		std::string name;
-		RangeTree<4> tree;
-		int last_int_value{0};
-		bool has_int_value{false};
+		int default_value;
+		RangeTree<4> tree{};
 	};
-
-	static std::vector<StyleInfo> &styles()
-	{
-		static std::vector<StyleInfo> s;
-		return s;
-	}
-
-	static std::unordered_map<std::string, int> &name_to_key()
-	{
-		static std::unordered_map<std::string, int> m;
-		return m;
-	}
+	std::vector<StyleInfo> styles;
+	std::unordered_map<std::string, int> name_to_key;
 
 public:
 	TestFormatProvider() = default;
 
 	// Explicitly register a style name and get its numeric key.
-	static int addStyle(const std::string &name)
+	int addStyle(const std::string &name, int default_value = 0)
 	{
-		auto &m = name_to_key();
-		auto &vec = styles();
-		auto it = m.find(name);
-		if (it != m.end())
+		auto it = name_to_key.find(name);
+		if (it != name_to_key.end())
 			return it->second;
-		int key = static_cast<int>(vec.size());
-		vec.push_back(StyleInfo{key, name, RangeTree<4>{}, 0, false});
-		m.emplace(name, key);
+		int key = static_cast<int>(styles.size());
+		styles.push_back(StyleInfo{key, name, default_value, RangeTree<4>{}});
+		name_to_key.emplace(name, key);
 		return key;
 	}
 
-	// For tests: read back the last int value applied to a style.
-	static bool getIntStyleValue(const std::string &name, int &out)
+	template <typename T>
+	T getDefaultValue(const std::string &style_name) const
 	{
-		auto &m = name_to_key();
-		auto &vec = styles();
-		auto it = m.find(name);
-		if (it == m.end())
-			return false;
-		const StyleInfo &info = vec[static_cast<std::size_t>(it->second)];
-		if (!info.has_int_value)
-			return false;
-		out = info.last_int_value;
-		return true;
+		auto it = name_to_key.find(style_name);
+		if (it == name_to_key.end())
+			return T{};
+		int key = it->second;
+		return styles[static_cast<std::size_t>(key)].default_value;
 	}
 
 	// Called by PieceCRDT::format to map style name to integer key.
-	template <typename RangeType, typename T>
-	int styleKey(const Formatting<RangeType, T> &op)
+	int styleKey(const std::string &style_name) const
 	{
-		auto &m = name_to_key();
-		auto &vec = styles();
-		int key;
-		auto it = m.find(op.key);
-		if (it == m.end())
-		{
-			key = static_cast<int>(vec.size());
-			vec.push_back(StyleInfo{key, op.key, RangeTree<4>{}, 0, false});
-			m.emplace(op.key, key);
-		}
-		else
-		{
-			key = it->second;
-		}
-
-		if constexpr (std::is_same_v<T, int>)
-		{
-			StyleInfo &info = vec[static_cast<std::size_t>(key)];
-			info.last_int_value = op.value;
-			info.has_int_value = true;
-		}
-
-		return key;
+		auto it = name_to_key.find(style_name);
+		if (it == name_to_key.end())
+			return -1;
+		return it->second;
 	}
 
-	// Access the RangeTree for a given style key.
 	RangeTree<4> &style(int key)
 	{
-		auto &vec = styles();
-		return vec[static_cast<std::size_t>(key)].tree;
+		return styles[static_cast<std::size_t>(key)].tree;
 	}
 
-	const RangeTree<4> &style(int key) const
+	template <typename Doc>
+	bool apply(Doc *doc, const Operation &op)
 	{
-		auto &vec = styles();
-		return vec[static_cast<std::size_t>(key)].tree;
+		if (op.type != OperationType::Format)
+			return false;
+		const auto &fmt_op = static_cast<const Formatting<OpenedRange, int> &>(op);
+		return doc->format(fmt_op);
 	}
 };
 

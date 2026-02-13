@@ -118,23 +118,52 @@ TEST(PlainTextTest, OldTag)
 	EXPECT_TRUE(doc.validate());
 }
 
-TEST(RichTextTest, IntFormat)
+TEST(RichTextTest, Undo)
 {
 	RichText<TestFormatProvider> doc;
-	std::string text = "Hello RichText";
+	doc.formatProvider().addStyle("intStyle", -1);
+	std::string text = "12345678901234567890";
 	doc.insert(0, text);
 
-	// Apply an int style to a range.
-	OpenedRange range = doc.toOpenedRange(0, 5); // "Hello"
-	size_t stamp = doc.format("intStyle", range, 42);
-	assert(stamp != 0);
+	doc.apply(Formatting<OpenedRange, int>(doc.replicaID(), 8, "intStyle", doc.toOpenedRange(6, 8), 2));
+	doc.apply(Formatting<OpenedRange, int>(doc.replicaID(), 9, "intStyle", doc.toOpenedRange(12, 14), 3));
+	doc.apply(Formatting<OpenedRange, int>(doc.replicaID(), 10, "intStyle", doc.toOpenedRange(5, 15), 4));
 
-	// Text content should remain unchanged by formatting.
-	assert(doc.toString() == text);
+	// covered op
+	doc.apply(Formatting<OpenedRange, int>(generateReplicaID(), 7, "intStyle", doc.toOpenedRange(7, 13), 1));
 
-	// Verify that the int style value was recorded by the provider.
-	int stored_value = 0;
-	bool ok = TestFormatProvider::getIntStyleValue("intStyle", stored_value);
-	EXPECT_TRUE(ok);
-	EXPECT_EQ(stored_value, 42);
+	doc.undoSpecific(OperationID(doc.replicaID(), 10));
+
+	EXPECT_EQ(doc.style<int>("intStyle", 5), -1);
+	EXPECT_EQ(doc.style<int>("intStyle", 6), 2);
+	EXPECT_EQ(doc.style<int>("intStyle", 7), 2);
+	EXPECT_EQ(doc.style<int>("intStyle", 8), 1);
+	EXPECT_EQ(doc.style<int>("intStyle", 9), 1);
+	EXPECT_EQ(doc.style<int>("intStyle", 10), 1);
+	EXPECT_EQ(doc.style<int>("intStyle", 11), 1);
+	EXPECT_EQ(doc.style<int>("intStyle", 12), 3);
+	EXPECT_EQ(doc.style<int>("intStyle", 13), 3);
+	EXPECT_EQ(doc.style<int>("intStyle", 14), -1);
+}
+
+TEST(RichTextTest, CoveredOp)
+{
+	RichText<TestFormatProvider> doc;
+	doc.formatProvider().addStyle("intStyle", -1);
+	std::string text = "12345678901234567890";
+	doc.insert(0, text);
+
+	doc.apply(Formatting<OpenedRange, int>(doc.replicaID(), 10, "intStyle", doc.toOpenedRange(5, 15), 3));
+
+	// covered op
+	doc.apply(Formatting<OpenedRange, int>(generateReplicaID(), 5, "intStyle", doc.toOpenedRange(7, 13), 1));
+
+	doc.undoSpecific(OperationID(doc.replicaID(), 10));
+
+	EXPECT_EQ(doc.style<int>("intStyle", 5), -1);
+	EXPECT_EQ(doc.style<int>("intStyle", 6), -1);
+	EXPECT_EQ(doc.style<int>("intStyle", 7), 1);
+	EXPECT_EQ(doc.style<int>("intStyle", 12), 1);
+	EXPECT_EQ(doc.style<int>("intStyle", 13), -1);
+	EXPECT_EQ(doc.style<int>("intStyle", 14), -1);
 }

@@ -34,7 +34,7 @@ public:
 	std::string slice(size_t begin, size_t end) const;
 	std::string slice(const Anchor &begin, const Anchor &end) const;
 
-	// query, iterate
+	// iterate
 	// Iterator begin();
 	// Iterator end();
 	// Iterator find(size_t pos);
@@ -103,14 +103,14 @@ public:
 	// basic information
 	size_t size() const;
 	bool empty() const;
-	FormatProvider &formatProvider() const;
+	FormatProvider &formatProvider();
 
 	// export
 	std::string toString() const;
 	std::string slice(size_t begin, size_t end) const;
 	std::string slice(const Anchor &begin, const Anchor &end) const;
 
-	// query, iterate
+	// iterate
 	// Iterator begin();
 	// Iterator end();
 	// Iterator find(size_t pos);
@@ -125,6 +125,10 @@ public:
 	size_t format(const std::string &style_name, size_t begin, size_t end, const T &value = {});
 	template <typename RangeType, typename T>
 	size_t format(const std::string &style_name, RangeType range, const T &value = {});
+
+	// style
+	template <typename T>
+	T style(const std::string &style_name, size_t pos) const;
 
 	// index conversion
 	OpenedRange toOpenedRange(size_t begin, size_t end) const;
@@ -172,7 +176,7 @@ bool RichText<FormatProvider>::empty() const
 }
 
 template <typename FormatProvider>
-FormatProvider &RichText<FormatProvider>::formatProvider() const
+FormatProvider &RichText<FormatProvider>::formatProvider()
 {
 	return doc.formatProvider();
 }
@@ -260,13 +264,17 @@ template <typename FormatProvider>
 template <typename RangeType, typename T>
 size_t RichText<FormatProvider>::format(const std::string &style_name, RangeType range, const T &value)
 {
-	Formatting<RangeType, T> op(doc.id(), doc.stamp(), style_name, range.begin, range.end, value);
+	Formatting<RangeType, T> op(doc.id(), doc.stamp(), style_name, range, value);
 	if (!doc.format(op))
 		return 0; // invalid style or no-op
-	auto frontline_ids = doc.frontline();
-	if (frontline_ids.empty())
-		return 0;
-	return frontline_ids.back().stamp;
+	undo_stack.push(op.stamp);
+	return op.stamp;
+}
+template <typename FormatProvider>
+template <typename T>
+T RichText<FormatProvider>::style(const std::string &style_name, size_t pos) const
+{
+	return doc.template style<T>(doc.find(pos), style_name);
 }
 
 template <typename FormatProvider>
