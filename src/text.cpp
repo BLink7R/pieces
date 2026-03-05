@@ -1,4 +1,4 @@
-#include "text.hpp"
+#include "textcrdt.hpp"
 
 namespace {
 	constexpr uint32_t kGroupStart = std::numeric_limits<uint32_t>::max();

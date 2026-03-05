@@ -7,7 +7,7 @@
 #include <stack>
 #include <vector>
 
-#include "piecetree.hpp"
+#include "textcrdt.hpp"
 
 // TODO: check index is valid
 class PlainText
