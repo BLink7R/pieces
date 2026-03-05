@@ -141,7 +141,7 @@ struct StoredContent : public UndoRedoableOp
 {
 	StoredAnchor anchor;
 	int len;
-	mutable std::vector<StoredContent *> child; // as segments are usually small, vector is faster
+	mutable std::vector<StoredContent *> child;				   // as segments are usually small, vector is faster
 	mutable std::unique_ptr<StoredDeletion> undo_del{nullptr}; // when insertion is undone, it needs an extra deletion
 
 	OperationType type() const override
@@ -190,7 +190,7 @@ struct StoredRangeOp : public UndoRedoableOp
 
 	OperationType type() const override
 	{
-		return OperationType::Format;
+		return OperationType::RangeFormat;
 	}
 
 	virtual int styleType() const = 0;
@@ -218,13 +218,17 @@ struct StoredFormat : public StoredRangeOp
 	StoredFormat(int key, T value)
 		: StoredRangeOp(), key(key), value(std::move(value)) {}
 
-	OperationType type() const override
-	{
-		return OperationType::Format;
-	}
-
 	int styleType() const override
 	{
 		return key;
 	}
+};
+
+// format of a paragraph, such as heading, list
+template <typename T>
+struct ParaFormat : public UndoRedoableOp
+{
+	StoredAnchor anchor;
+	int key;
+	T value;
 };

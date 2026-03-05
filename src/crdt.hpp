@@ -36,7 +36,8 @@ enum class OperationType : uint8_t
 {
 	Insert,
 	Delete,
-	Format,
+	RangeFormat,
+	ParaFormat,
 	Undo,
 	Redo,
 };
@@ -146,7 +147,7 @@ struct Formatting : public Operation
 
 	Formatting() = default;
 	Formatting(const ReplicaID &replica, uint32_t stamp, std::string key, const RangeType &range, T value)
-		: Operation(replica, stamp, OperationType::Format), key(std::move(key)), range(range), value(std::move(value)) {}
+		: Operation(replica, stamp, OperationType::RangeFormat), key(std::move(key)), range(range), value(std::move(value)) {}
 };
 
 // one replica can only undo/redo its operation, so only one stamp is needed.
