@@ -3,3 +3,4 @@
 .helix
 build
 vcpkg_installed
+.clangd
