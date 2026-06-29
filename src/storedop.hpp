@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <utf8cpp/utf8.h>
 
 #include "crdt.hpp"
 #include "taggedptr.hpp"
@@ -8,10 +9,14 @@
 struct Replica;
 struct Piece;
 struct StoredAnchor;
-struct StoredContent;
+struct Segment;
 struct StoredOperation;
 struct StoredRangeOp;
 struct StoredDeletion;
+
+using piece_size_t = int32_t;
+using stamp_size_t = uint32_t;
+using doc_size_t = size_t;
 
 struct Replica
 {
@@ -19,11 +24,11 @@ struct Replica
 	// TODO: change to map to save space
 	mutable std::vector<std::unique_ptr<StoredOperation>> operations; // created segments
 
-	uint32_t maxStamp() const
+	stamp_size_t maxStamp() const
 	{
 		if (operations.empty())
 			return 0;
-		return static_cast<uint32_t>(operations.size());
+		return static_cast<stamp_size_t>(operations.size());
 	}
 
 	bool operator<(const Replica &other) const
@@ -38,11 +43,11 @@ struct Replica
 
 struct StoredAnchor
 {
-	StoredContent *seg{nullptr};
-	int32_t pos{0};
+	Segment *seg{nullptr};
+	piece_size_t pos{0};
 
 	StoredAnchor() = default;
-	StoredAnchor(StoredContent *seg, int32_t pos)
+	StoredAnchor(Segment *seg, piece_size_t pos)
 		: seg(seg), pos(pos)
 	{
 		assert(seg != nullptr && pos != 0);
@@ -69,14 +74,14 @@ struct StoredAnchor
 	}
 
 	// return distance to segment start
-	int32_t segPos() const;
+	piece_size_t segPos() const;
 	Anchor toAnchor() const;
 };
 
 struct StoredOperation
 {
 	const Replica *replica{nullptr};
-	uint32_t stamp{0};
+	stamp_size_t stamp{0};
 
 	virtual ~StoredOperation() = default;
 
@@ -135,35 +140,6 @@ struct StoredRedo : public StoredOperation
 	}
 };
 
-// inline shapes and tables are also StoredContents, but has a len of 1
-// the derived classes must have a len >= 1
-struct StoredContent : public UndoRedoableOp
-{
-	StoredAnchor anchor;
-	int len;
-	mutable std::vector<StoredContent *> child;				   // as segments are usually small, vector is faster
-	mutable std::unique_ptr<StoredDeletion> undo_del{nullptr}; // when insertion is undone, it needs an extra deletion
-
-	OperationType type() const override
-	{
-		return OperationType::Insert;
-	}
-};
-
-inline Anchor StoredAnchor::toAnchor() const
-{
-	Anchor anchor;
-	anchor.replica = seg->replica->id;
-	anchor.stamp = seg->stamp;
-	anchor.pos = pos;
-	return anchor;
-}
-
-inline int32_t StoredAnchor::segPos() const
-{
-	return pos < 0 ? seg->len + pos : pos;
-}
-
 enum class TagStatus : uint8_t
 {
 	Active,
@@ -187,13 +163,6 @@ struct StoredRangeOp : public UndoRedoableOp
 {
 	RangeTag *left{nullptr};
 	RangeTag *right{nullptr};
-
-	OperationType type() const override
-	{
-		return OperationType::RangeFormat;
-	}
-
-	virtual int styleType() const = 0;
 };
 
 struct StoredDeletion : public StoredRangeOp
@@ -202,33 +171,207 @@ struct StoredDeletion : public StoredRangeOp
 	{
 		return OperationType::Delete;
 	}
-
-	int styleType() const override
-	{
-		return 0;
-	}
 };
 
-template <typename T>
-struct StoredFormat : public StoredRangeOp
-{
-	int key;
-	T value;
-
-	StoredFormat(int key, T value)
-		: StoredRangeOp(), key(key), value(std::move(value)) {}
-
-	int styleType() const override
-	{
-		return key;
-	}
-};
-
-// format of a paragraph, such as heading, list
-template <typename T>
-struct ParaFormat : public UndoRedoableOp
+// Text is stored in segments. Whenever text is inserted, a new segment is created,
+// and the target segment with the insertion offset is stored, keeping the target unchanged.
+// As user edits are usually small, and we need to implement anchor in 2 directions, we
+// limit the length of segments to INT_MAX. The length of pieces can be much smaller.
+struct Segment : public UndoRedoableOp
 {
 	StoredAnchor anchor;
-	int key;
-	T value;
+	int len;
+	mutable std::vector<Segment *> child;					   // as segments are usually small, vector is faster
+	mutable std::unique_ptr<StoredDeletion> undo_op{nullptr}; // when insertion is undone, it needs an extra deletion
+	mutable std::vector<Piece *> split_piece;
+	std::unique_ptr<const char[]> data{nullptr};
+	std::unique_ptr<piece_size_t[]> line_breaks{nullptr};
+	piece_size_t line_break_count{0};
+
+	Segment(const std::string &str)
+		: UndoRedoableOp()
+	{
+		// TODO: ensure that str.size() <= INT32_MAX
+		data = std::make_unique<const char[]>(str.size() + 1);
+		memcpy(const_cast<char *>(data.get()), str.c_str(), str.size() + 1);
+		len = static_cast<piece_size_t>(utf8::distance(data.get(), data.get() + str.size()));
+
+		// collect newline positions in UTF-8 character offsets
+		if (!str.empty())
+		{
+			std::vector<piece_size_t> breaks;
+			const char *it = str.data();
+			const char *end = it + str.size();
+			piece_size_t char_index = 0;
+			while (it < end)
+			{
+				if (*it == '\r')
+				{
+					if ((it + 1) < end && *(it + 1) == '\n')
+						breaks.push_back(char_index + 1);
+					else
+						breaks.push_back(char_index);
+				}
+				else if (*it == '\n')
+					breaks.push_back(char_index + 1);
+				utf8::next(it, end);
+			}
+			line_break_count = breaks.size();
+			if (line_break_count != 0)
+			{
+				line_breaks = std::make_unique<piece_size_t[]>(line_break_count);
+				for (size_t i = 0; i < line_break_count; ++i)
+					line_breaks[i] = breaks[i];
+			}
+		}
+	}
+	~Segment() override = default;
+
+	OperationType type() const override
+	{
+		return OperationType::Insert;
+	}
+
+	auto pieceAt(piece_size_t position) const;
+	auto insertPiece(Piece *piece);
+
+	auto insertSegment(Segment *segment)
+	{ // TODO: we can change it to std::find if segment is small
+		auto it = std::lower_bound(
+			child.begin(), child.end(), segment,
+			[](const Segment *a, const Segment *b)
+		{
+			if (a->anchor.segPos() != b->anchor.segPos())
+				return a->anchor.segPos() < b->anchor.segPos();
+			if (a->anchor.pos != b->anchor.pos) // reversed vs normal, normal goes first
+				return a->anchor.pos > b->anchor.pos;
+			if (a->anchor.pos > 0)
+				return *a < *b; // normal: earlier goes first
+			else
+				return *b < *a; // reversed: later goes first
+		});
+		return child.insert(it, segment);
+	}
+
+	piece_size_t findLineBreak(piece_size_t utf8_offset) const
+	{
+		if (line_break_count == 0)
+			return 0;
+		const piece_size_t *begin = line_breaks.get();
+		const piece_size_t *end = begin + line_break_count;
+		const piece_size_t *it = std::lower_bound(begin, end, utf8_offset);
+		return static_cast<piece_size_t>(it - begin);
+	}
+
+	Segment(Segment &&other) noexcept = default;
+	Segment &operator=(Segment &&other) noexcept = default;
+	Segment(const Segment &other) = delete;
+	Segment &operator=(const Segment &other) = delete;
 };
+
+struct PieceInfo
+{
+	doc_size_t total{0};
+	doc_size_t visible{0};
+
+	PieceInfo operator+(const PieceInfo &other) const
+	{
+		return {.total = total + other.total, .visible = visible + other.visible};
+	}
+	PieceInfo &operator+=(const PieceInfo &other)
+	{
+		visible += other.visible;
+		total += other.total;
+		return *this;
+	}
+	PieceInfo &operator-=(const PieceInfo &other)
+	{
+		visible -= other.visible;
+		total -= other.total;
+		return *this;
+	}
+	bool operator!=(const PieceInfo &other) const
+	{
+		return visible != other.visible || total != other.total;
+	}
+};
+
+// Segments are split into pieces according to global offsets.
+// TODO: limit the length of piece, as the split operation is O(n) in the length of piece.
+struct Piece
+{
+	Segment *seg{nullptr};
+	const char *data{nullptr};
+	piece_size_t len{0};
+	piece_size_t seg_pos{0};
+	StoredRangeOp *tombStone{nullptr};
+
+	Piece() = default;
+	Piece(Segment *seg)
+		: seg(seg),
+		  data(seg->data.get()),
+		  len(seg->len),
+		  seg_pos(0) {}
+
+	bool isRemoved() const
+	{
+		return tombStone != nullptr;
+	}
+
+	PieceInfo size() const
+	{
+		return {.total = static_cast<doc_size_t>(len),
+				.visible = isRemoved() ? 0 : static_cast<doc_size_t>(len)};
+	}
+
+	bool operator<(const Piece &other) const
+	{
+		return data < other.data;
+	}
+};
+
+// if anchor is normal, return the piece before the position
+// if anchor is reversed, return the piece after the position
+inline auto Segment::pieceAt(piece_size_t pos) const
+{
+	if (pos == 0 || std::abs(pos) > len)
+		return split_piece.end();
+	if (pos > 0)
+		return std::lower_bound(
+			split_piece.begin(), split_piece.end(), pos,
+			[](const Piece *p, piece_size_t position)
+		{
+			return p->seg_pos + p->len < position;
+		});
+	return std::lower_bound(
+		split_piece.begin(), split_piece.end(), len + pos,
+		[](const Piece *p, piece_size_t position)
+	{
+		return p->seg_pos + p->len <= position;
+	});
+}
+
+inline auto Segment::insertPiece(Piece *piece)
+{
+	auto it = std::lower_bound(
+		split_piece.begin(), split_piece.end(), piece,
+		[](const Piece *a, const Piece *b)
+	{
+		return a->seg_pos < b->seg_pos;
+	});
+	return split_piece.insert(it, piece);
+}
+
+inline Anchor StoredAnchor::toAnchor() const
+{
+	Anchor anchor;
+	anchor.replica = seg->replica->id;
+	anchor.stamp = seg->stamp;
+	anchor.pos = pos;
+	return anchor;
+}
+
+inline piece_size_t StoredAnchor::segPos() const
+{
+	return pos < 0 ? seg->len + pos : pos;
+}

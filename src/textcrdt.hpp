@@ -5,16 +5,11 @@
 #include <unordered_set>
 
 #include "piecetree.hpp"
+#include "rangetree.hpp"
 #include "taggedptr.hpp"
 
-template <typename FormatProvider = void>
 class PieceCRDT
 {
-	struct Empty
-	{
-	};
-	using Format = std::conditional_t<std::is_same_v<FormatProvider, void>, Empty, FormatProvider>;
-
 private:
 	uint32_t lamport_stamp;
 	const ReplicaID local_id;
@@ -24,7 +19,6 @@ protected:
 	OrderedSet<Replica, 4> replicas;
 	mutable PieceTree<4> piece_tree;
 	RangeTree<4> deletions;
-	Format format_provider;
 
 public:
 	using Iterator = typename PieceTree<4>::Iterator;
@@ -33,7 +27,7 @@ public:
 		: lamport_stamp(0),
 		  local_id(generateReplicaID()),
 		  origin_id(origin.is_nil() ? local_id : origin),
-		  piece_tree(storeOp<Segment>(ReplicaID(), 1, std::string(1, 0))) // EOF
+		  piece_tree(this->storeOp<Segment>(ReplicaID(), 1, std::string(1, 0))) // EOF
 	{
 	}
 	PieceCRDT(const PieceCRDT &) = delete;
@@ -266,12 +260,6 @@ public:
 			return undo(static_cast<const UndoOperation &>(op));
 		case OperationType::Redo:
 			return redo(static_cast<const RedoOperation &>(op));
-		case OperationType::Format:
-			if constexpr (!std::is_same_v<FormatProvider, void>)
-				return format_provider.apply(this, op);
-			else
-				return false;
-			break;
 		default:
 			return false;
 		}
@@ -291,53 +279,6 @@ public:
 
 		segment->anchor = anchor;
 		piece_tree.insert(segment);
-		return true;
-	}
-
-	auto &formatProvider()
-		requires(!std::is_same_v<FormatProvider, void>)
-	{
-		return format_provider;
-	}
-
-	template <typename T>
-	T style(Iterator it, std::string style_name) const
-		requires(!std::is_same_v<FormatProvider, void>)
-	{
-		int style_key = format_provider.styleKey(style_name);
-		if (style_key < 0)
-			return T{};
-		StoredRangeOp *op = it->styles[style_key];
-		if (op == nullptr)
-			return format_provider.template getDefaultValue<T>(style_name);
-		return static_cast<StoredFormat<T> *>(op)->value;
-	}
-
-	template <typename RangeType, typename T>
-	bool format(const Formatting<RangeType, T> &op)
-		requires(!std::is_same_v<FormatProvider, void>)
-	{
-		int style_key = format_provider.styleKey(op.key);
-		if (style_key < 0)
-			return false; // invalid style
-		if (op.range.begin == op.range.end)
-			return false; // no-op
-		auto begin = toStored(op.range.begin);
-		auto end = toStored(op.range.end);
-		if (begin.seg == nullptr || end.seg == nullptr)
-			return false; // invalid anchor
-
-		auto *stored_op = storeOp<StoredFormat<T>>(op.replica, op.stamp, style_key, op.value);
-		if (!stored_op)
-			return false; // duplicate operation
-
-		auto style_tree = format_provider.style(stored_op->key);
-		auto [left_it, right_it] = style_tree.apply(
-			RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
-		stored_op->left = &*left_it;
-		stored_op->right = &*right_it;
-
-		redoFormat(stored_op);
 		return true;
 	}
 
@@ -427,12 +368,6 @@ private:
 		case OperationType::Delete:
 			redoDel(static_cast<StoredDeletion *>(target));
 			break;
-		case OperationType::Format:
-			if constexpr (!std::is_same_v<FormatProvider, void>)
-				redoFormat(static_cast<StoredRangeOp *>(target));
-			else
-				assert(false && "format operation is not supported");
-			break;
 		case OperationType::Undo:
 		case OperationType::Redo:
 			assert(false && "cannot redo an undo/redo operation directly");
@@ -455,12 +390,6 @@ private:
 			break;
 		case OperationType::Delete:
 			undoDel(static_cast<StoredDeletion *>(target));
-			break;
-		case OperationType::Format:
-			if constexpr (!std::is_same_v<FormatProvider, void>)
-				undoFormat(static_cast<StoredRangeOp *>(target));
-			else
-				assert(false && "format operation is not supported");
 			break;
 		case OperationType::Undo:
 		case OperationType::Redo:
@@ -547,123 +476,6 @@ private:
 		auto left_piece = piece_tree.find(target->left->anchor);
 		auto right_piece = piece_tree.find(target->right->anchor);
 		piece_tree.update(left_piece, right_piece);
-	}
-
-	void redoFormat(StoredRangeOp *target)
-		requires(!std::is_same_v<FormatProvider, void>)
-	{
-		assert(target->left->status == TagStatus::Undone && target->right->status == TagStatus::Undone);
-		int style_key = target->styleType();
-		auto left_piece = piece_tree.find(target->left->anchor);
-		auto right_piece = piece_tree.find(target->right->anchor);
-
-		// Update tag->old for left and right boundary pieces by checking first and last pieces
-		// inside the deletion. We do not check pieces outside the deletion range because it
-		// needs to process the right closed anchor case.
-		{
-			auto piece_before = left_piece;
-			target->left->old.setBad();
-			auto op = piece_before->styles[style_key];
-			assert(op == nullptr || op->right->old.isGood());
-			if (op == nullptr)
-				target->left->old = nullptr;
-			else if (op->left->anchor != target->left->anchor)
-			{
-				if (*op < *target)
-					target->left->old = op;
-			}
-			else if (op->left->old == nullptr || *op->left->old < *target)
-			{
-				assert(op->left->status == TagStatus::Active && "tombStone should be Active");
-				target->left->old = op->left->old;
-			}
-		}
-		{
-			auto piece_after = right_piece;
-			target->right->old.setBad();
-			auto op = piece_after->styles[style_key];
-			assert(op == nullptr || op->left->old.isGood());
-			if (op == nullptr)
-				target->right->old = nullptr;
-			else if (op->right->anchor != target->right->anchor)
-			{
-				if (*op < *target)
-					target->right->old = op;
-			}
-			else if (op->right->old == nullptr || *op->right->old < *target)
-			{
-				assert(op->right->status == TagStatus::Active && "tombStone should be Active");
-				target->right->old = op->right->old;
-			}
-		}
-
-		std::multimap<void *, Piece *> cache;
-		redoRangeOp(target, [style_key, &cache](Piece *piece, StoredRangeOp *op)
-		{
-			if (piece->styles[style_key] == nullptr || *piece->styles[style_key] < *op)
-				cache.insert({piece->styles.raw(), piece});
-		});
-		for (auto it = cache.begin(); it != cache.end();)
-		{
-			auto range = cache.equal_range(it->first);
-			Piece *first_piece = range.first->second;
-			Formats new_formats = first_piece->styles;
-			new_formats.set(style_key, target);
-			for (auto jt = range.first; jt != range.second; ++jt)
-			{
-				jt->second->styles = new_formats;
-			}
-			it = range.second;
-		}
-	}
-
-	void undoFormat(StoredRangeOp *target)
-		requires(!std::is_same_v<FormatProvider, void>)
-	{
-		int style_key = target->styleType();
-
-		std::multimap<std::pair<void *, StoredRangeOp *>, Piece *> cache;
-		auto ops_covered = undoRangeOp(target, [target, style_key, &cache](Piece *piece, StoredRangeOp *newest)
-		{
-			if (piece->styles[style_key] == target)
-				cache.insert({{piece->styles.raw(), newest}, piece});
-		});
-		for (auto it = cache.begin(); it != cache.end();)
-		{
-			auto range = cache.equal_range(it->first);
-			StoredRangeOp *newest_op = it->first.second;
-			Piece *first_piece = range.first->second;
-			Formats new_formats = first_piece->styles;
-			new_formats.set(style_key, newest_op);
-			for (auto jt = range.first; jt != range.second; ++jt)
-			{
-				Piece *piece = jt->second;
-				piece->styles = new_formats;
-			}
-			it = range.second;
-		}
-
-		for (auto op : ops_covered)
-		{
-			std::multimap<void *, Piece *> cache;
-			redoRangeOp(op, [style_key, &cache](Piece *piece, StoredRangeOp *op)
-			{
-				if (piece->styles[style_key] == nullptr || *piece->styles[style_key] < *op)
-					cache.insert({piece->styles.raw(), piece});
-			});
-			for (auto it = cache.begin(); it != cache.end();)
-			{
-				auto range = cache.equal_range(it->first);
-				Piece *first_piece = range.first->second;
-				Formats new_formats = first_piece->styles;
-				new_formats.set(style_key, op);
-				for (auto jt = range.first; jt != range.second; ++jt)
-				{
-					jt->second->styles = new_formats;
-				}
-				it = range.second;
-			}
-		}
 	}
 
 	void redoInsertion(Segment *target)

@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "piecetree.hpp"
+#include "textcrdt.hpp"
 
 class SimpleText
 {
@@ -204,71 +204,7 @@ public:
 	}
 };
 
-// A simple format provider for tests, mapping style name -> integer key
-// and recording the last int value applied for each style.
-class TestFormatProvider
-{
-private:
-	struct StyleInfo
-	{
-		int key;
-		std::string name;
-		int default_value;
-		RangeTree<4> tree{};
-	};
-	std::vector<StyleInfo> styles;
-	std::unordered_map<std::string, int> name_to_key;
-
-public:
-	TestFormatProvider() = default;
-
-	// Explicitly register a style name and get its numeric key.
-	int addStyle(const std::string &name, int default_value = 0)
-	{
-		auto it = name_to_key.find(name);
-		if (it != name_to_key.end())
-			return it->second;
-		int key = static_cast<int>(styles.size());
-		styles.push_back(StyleInfo{key, name, default_value, RangeTree<4>{}});
-		name_to_key.emplace(name, key);
-		return key;
-	}
-
-	template <typename T>
-	T getDefaultValue(const std::string &style_name) const
-	{
-		auto it = name_to_key.find(style_name);
-		if (it == name_to_key.end())
-			return T{};
-		int key = it->second;
-		return styles[static_cast<std::size_t>(key)].default_value;
-	}
-
-	// Called by PieceCRDT::format to map style name to integer key.
-	int styleKey(const std::string &style_name) const
-	{
-		auto it = name_to_key.find(style_name);
-		if (it == name_to_key.end())
-			return -1;
-		return it->second;
-	}
-
-	RangeTree<4> &style(int key)
-	{
-		return styles[static_cast<std::size_t>(key)].tree;
-	}
-
-	template <typename Doc>
-	bool apply(Doc *doc, const Operation &op)
-	{
-		if (op.type != OperationType::Format)
-			return false;
-		const auto &fmt_op = static_cast<const Formatting<OpenedRange, int> &>(op);
-		return doc->format(fmt_op);
-	}
-};
-
-class PieceCRDTValidator : public PieceCRDT<void>
+class PieceCRDTValidator : public PieceCRDT
 {
 public:
 	// closed range for history index

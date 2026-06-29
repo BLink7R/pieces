@@ -36,8 +36,6 @@ enum class OperationType : uint8_t
 {
 	Insert,
 	Delete,
-	RangeFormat,
-	ParaFormat,
 	Undo,
 	Redo,
 };
@@ -136,18 +134,6 @@ struct Deletion : public Operation
 		: Operation(replica, stamp, OperationType::Delete), range(begin, end) {}
 	Deletion(const ReplicaID &replica, uint32_t stamp, const ClosedRange &range)
 		: Operation(replica, stamp, OperationType::Delete), range(range) {}
-};
-
-template <typename RangeType, typename T>
-struct Formatting : public Operation
-{
-	RangeType range;
-	std::string key;
-	T value;
-
-	Formatting() = default;
-	Formatting(const ReplicaID &replica, uint32_t stamp, std::string key, const RangeType &range, T value)
-		: Operation(replica, stamp, OperationType::RangeFormat), key(std::move(key)), range(range), value(std::move(value)) {}
 };
 
 // one replica can only undo/redo its operation, so only one stamp is needed.
