@@ -139,7 +139,7 @@ coordinate：操作不变的文本坐标
 
 文本坐标需要能够描述在某个字符的前或后，这点非常重要。因为如果文本坐标是统一的某个字符的前或者后，会有interleaving problem（前面已经提到）。
 
-为了能够表达在某个字符的前或后，规定如下：对于一个长度为n的segment，k在[1,n]表示在第i个字符的后面，k在[-n,-1]表示在倒数第-k个字符的前面。即-n是在segment的最前面，n是在segment的最后面。
+为了能够表达在某个字符的前或后，规定如下：对于一个长度为n的segment，k在[1,n]表示在第k个字符的后面，k在[-n,-1]表示在倒数第-k个字符的前面。即-n是在segment的最前面，n是在segment的最后面。
 
 #### 树结构：
 
@@ -185,13 +185,15 @@ coordinate：操作不变的文本坐标
 
 **区分类型：**不同类型的区间属性应当分别维护。
 
-#### 区间操作的应用或重做:切割天际线
+#### 区间操作的应用或重做：切割天际线
 
 考虑到分布式协作时操作的到来不按顺序，一个区间操作在应用时和重做时实际上是相同的逻辑，都需要考虑是否会有比其更晚的操作已经应用。
 
-区间操作的应用围绕是否会切割天际线。切割天际线就是对于某个操作，其在应用前，其区间内有某个端点，待应用的操作比端点的old更新，但比端点所属更老。而从定义上来说，天际线中是不可能出现切割的情况的，因此目标就是消除切割天际线的状态。一旦在重做时发现至少切割了一个端点，就可以重建天际线。方法如下：
+首先从左到右扫描待应用区间内所有未被撤销的端点，检查是否存在切割天际线的情况。切割天际线就是对于某个端点，待应用的操作比该端点的old更新，但比端点所属操作更老。从天际线的定义上来说，切割是不可能出现的，因此一旦发现至少切割了一个端点，就需要重建天际线。
 
-1. 从左到右扫描待应用区间内所有未被撤销的端点，记录被切割的端点为A
+**若发现切割**，重建天际线的方法如下：
+
+1. 记录被切割的端点为A
 
 2. 选择A中最左侧的端点L，记录天际线操作为L的old标签所指的区间操作
 
@@ -215,9 +217,9 @@ coordinate：操作不变的文本坐标
 
 8. 修改区间中所有pieces的属性
 
-   如果没有发现，再查看区间内当前生效操作，如果生效操作早于待应用操作，则说明是最新操作，直接应用，否则说明有一个比其晚且完全覆盖其的操作存在。可以将当前的重做推迟到该覆盖的操作撤销后再做，当前标记一个未应用即可。
+**若未发现切割**，查看区间内当前生效操作：若生效操作早于待应用操作，说明待应用操作是最新操作，直接应用即可；否则说明存在一个比其晚且完全覆盖它的操作，将本次重做推迟到该覆盖操作撤销后再执行，此时将待应用操作标记为未应用。
 
-   所以撤销在更新完天际线后，还要检查是否有覆盖的未应用的操作，如果有再做redo。
+撤销操作在更新完天际线后，同样要检查区间内是否有被其覆盖的未应用操作，若有则再做redo。
 
 例子：
 当前有4个操作：
@@ -246,6 +248,72 @@ t5：{l_current=5,l_old=0,r_current=5,r_old=0}
 到10，到达待应用操作的右端点，确认其old为0
 随后将t5的两个端点的old标签设为4即可。
 
+伪代码（对应src/textcrdt.hpp的redoDel/redoRangeOp，应用与重做共用同一逻辑）：
+
+```plaintext
+redoDel(op):
+    # 1. 尝试从边界piece的tombstone直接取得端点处的天际线，避免不必要的扫描
+    left_piece = findPiece(op.left.anchor)
+    p = left_piece.tombStone
+    if p == null:
+        op.left.old = null
+    elif p.left.anchor != op.left.anchor and p < op:
+        op.left.old = p
+    elif p.left.anchor == op.left.anchor and (p.left.old == null or p.left.old < op):
+        op.left.old = p.left.old
+    # 右端点对称处理（right_piece/p.right/op.right），无法确定时old保持bad，留待重建
+
+    redoRangeOp(op)
+
+redoRangeOp(op):
+    # 2. 修改区间内所有piece的属性（右端为闭时末尾piece也包含）
+    for piece in pieces(op.left.anchor, op.right.anchor):
+        if piece.tombStone == null or piece.tombStone < op:
+            piece.tombStone = op
+
+    # 3. 扫描区间内端点，找被切割的端点A：op比端点old新、比端点所属操作老
+    A = []
+    for tag in tags(op.left, op.right):
+        if tag.status == Active and (tag.old == null or tag.old < op) and op < tag.cur:
+            A.append(tag)
+
+    if A为空:
+        if op.left.old有效 and op.right.old有效:
+            op.left.status = op.right.status = Active   # 最新操作，直接应用
+        else:
+            op.left.status = op.right.status = UnUsed   # 被更晚且完全覆盖的操作覆盖，推迟重做
+        return
+
+    # 4. 发现切割，重建天际线
+    op.left.status = op.right.status = Active
+    first, last = A中最左端点, A中最右端点
+    # 向左扫描（仅当op.left.old未知时）：从first左侧到op.left
+    newest = first.old
+    for tag in tags(first左侧, op.left):
+        if tag.status != Active: continue
+        if tag.is_left and tag.cur == newest:
+            newest = tag.old                      # 向上走
+        elif tag.is_right and (newest == null or newest < tag.cur) and tag.cur < op:
+            assert(tag.old == newest)
+            newest = tag.cur                      # 向下走
+    op.left.old = newest
+    # 向右扫描（对称）：从last右侧到op.right
+    newest = last.old
+    for tag in tags(last右侧, op.right):
+        if tag.status != Active: continue
+        if tag.is_right and tag.cur == newest:
+            newest = tag.old
+        elif tag.is_left and tag.cur < op and (newest == null or newest < tag.cur):
+            assert(tag.old == newest)
+            newest = tag.cur
+    op.right.old = newest
+
+    # 5. 被切割端点的old指向待应用操作
+    first.old = last.old = op
+```
+
+注意：实现中第5步仅修改A中最左、最右两个端点的old（first_across/last_across），与上文文字描述第7步"修改A中所有端点的old标签"略有出入，以代码为准。
+
 #### 区间操作的撤销
 
 操作撤销后会标记被撤销，并删除出天际线。因此需要做的操作是修改操作区间内所有old tag指向他的端点的old tag。方法如下：
@@ -264,6 +332,56 @@ t5：{l_current=5,l_old=0,r_current=5,r_old=0}
 
    5. 其他情况都是不可能出现的
 
+伪代码（对应src/textcrdt.hpp的undoDel/undoRangeOp）：
+
+```plaintext
+undoDel(op):
+    covered = undoRangeOp(op)          # 返回被覆盖的未应用操作，按新到旧排序
+    for c in covered:                  # 撤销后重做被覆盖的未应用操作
+        redoRangeOp(c)                 # 复用上面的redoRangeOp
+
+undoRangeOp(op):
+    L, R = op.left, op.right
+    if L.status == UnUsed or R.status == UnUsed:   # 从未生效的操作（被完全覆盖），无后续影响
+        L.status = R.status = Undone
+        return []
+
+    L.status = R.status = Undone
+    newest = L.old                     # 当前天际线操作
+    covered = []
+    unused = {}
+    piece_cursor = findPiece(L.anchor)
+    for tag in tags(L右侧, R]:         # 从左到右遍历区间内端点
+        # 1. 将piece_cursor到tag锚点之间的piece恢复为天际线操作
+        for piece in pieces(piece_cursor, tag.anchor):
+            if piece.tombStone == op:
+                piece.tombStone = newest
+        if tag == R: break
+
+        # 2. 更新端点
+        if tag.status == Undone: continue
+        if tag.status == UnUsed and op < tag.cur: continue
+        if tag.status == Active and tag.old != null and op < tag.old: continue   # 过滤
+        if tag.old == op:
+            tag.old = newest
+        elif tag.is_left:
+            if tag.status == UnUsed:
+                unused.add(tag.cur)
+                tag.old = newest if (newest == null or newest < tag.cur) else bad
+            elif newest == null or newest < tag.cur:
+                assert(tag.old == newest)
+                newest = tag.cur       # 向上走
+        else:
+            if tag.status == UnUsed and tag.cur in unused:
+                covered.append(tag.cur)
+                tag.old = newest if (newest == null or newest < tag.cur) else bad
+            elif tag.cur == newest:
+                newest = tag.old       # 向下走
+
+    sort covered 从新到旧              # 先重做更晚的操作，避免影响较早操作的old
+    return covered
+```
+
 #### 考虑插入
 
 前面的模型没有考虑插入操作，现在引入插入操作。由于文本坐标不受插入操作影响，区间操作也不会随插入操作改变。唯一需要做的是插入时需要正确计算当前生效的区间操作并设置文本属性，就可以保证插入和区间操作的CRDT一致性。
@@ -281,3 +399,41 @@ t5：{l_current=5,l_old=0,r_current=5,r_old=0}
    因此每一个piece需要记录两个状态：一个tombstone记录最新的删除操作，一个undo\_del记录撤销对应的删除操作。在撤销插入操作时，如果其undo\_del为空，则创建一个删除操作，若不为空，则该删除操作应该是撤销状态，将其重做。在重做插入操作时，则其undo\_del操作应当不为空且状态不为撤销状态，将其撤销即可。
 
    正常删除区间只要按区间操作来做即可。
+
+伪代码（对应src/textcrdt.hpp的undo/redo分发与undoInsertion/redoInsertion）：
+
+```plaintext
+undo(op, targetID):                      # redo对称
+    target = find(targetID)
+    if target是StoredUndo:
+        return redo(op', target.target)  # 撤销撤销 = 重做其目标操作
+    if target是StoredRedo:
+        target = target.target           # 撤销重做 = 撤销其目标操作
+    u = store StoredUndo(op)，u.target = target
+    undoOp(u)
+
+undoOp(u):                               # redoOp对称（对应redoInsertion/redoDel）
+    target = u.target
+    if target.undoredo != null and u < target.undoredo:
+        return                           # LWW：已有更新的undo/redo作用于该操作
+    switch target.type:
+        Insert: undoInsertion(segment)
+        Delete: undoDel(deletion)
+    target.undoredo = u                  # 记录最新作用于该操作的undo/redo
+
+undoInsertion(seg):                      # 撤销插入 = 用删除隐藏整个segment
+    if seg.undo_op == null:              # 首次撤销时创建覆盖整个segment的删除操作
+        seg.undo_op = new StoredDeletion(
+            begin = anchor(seg, -seg.len),   # reversed，segment起始处
+            end   = anchor(seg,  seg.len))   # normal，segment末尾处（前后均闭）
+    redoDel(seg.undo_op)
+
+redoInsertion(seg):                      # 重做插入 = 撤销隐藏它的删除
+    if seg.undo_op != null:
+        undoDel(seg.undo_op)
+```
+
+说明：
+
+- seg.undo_op使用与原segment相同的(replica, stamp)作为操作身份，且不存入replica的操作表中——保证各副本撤销同一插入时生成相同身份的删除操作，LWW判定一致
+- PlainText层（src/text.cpp）用undo_stack/redo_stack存本地操作stamp，beginGroup/endGroup以哨兵值分组；undo()按栈顶元素（组或单个操作）逐个生成新的UndoOperation执行，撤销产物不重新入栈；undoSpecific/redoSpecific可指向任意协作者的操作，且其产物会记录入栈
