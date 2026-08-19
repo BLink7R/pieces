@@ -167,3 +167,49 @@ TEST(RichTextTest, CoveredOp)
 	EXPECT_EQ(doc.style<int>("intStyle", 13), -1);
 	EXPECT_EQ(doc.style<int>("intStyle", 14), -1);
 }
+
+TEST(PlainTextTest, InlineObject)
+{
+	const std::string obj_marker = "\xFF";
+	PlainText text;
+	text.insert(0, "hello");
+	text.insertObject(5, "obj1");
+	text.insert(6, " world");
+	EXPECT_EQ(text.toString(), "hello" + obj_marker + " world");
+
+	// undo removes the object insertion, redo restores it
+	OperationID object_op(text.replicaID(), 3);
+	text.undoSpecific(object_op);
+	EXPECT_EQ(text.toString(), "hello world");
+	text.redoSpecific(object_op);
+	EXPECT_EQ(text.toString(), "hello" + obj_marker + " world");
+
+	// delete the object
+	text.del(5, 6);
+	EXPECT_EQ(text.toString(), "hello world");
+}
+
+TEST(PlainTextTest, InlineObjectSync)
+{
+	const std::string obj_marker = "\xFF";
+	PlainText a;
+	a.insert(0, "hello");
+	a.insertObject(5, "img1");
+
+	PlainText b(a.origin());
+	b.apply(a.diff(b.frontline()));
+	EXPECT_EQ(b.toString(), "hello" + obj_marker);
+
+	// concurrent edit after the object converges
+	b.insert(6, "X");
+	a.apply(b.diff(a.frontline()));
+	EXPECT_EQ(a.toString(), "hello" + obj_marker + "X");
+	EXPECT_EQ(b.toString(), "hello" + obj_marker + "X");
+
+	// undo of the object insertion converges across replicas
+	OperationID object_op(a.replicaID(), 3);
+	b.undoSpecific(object_op);
+	EXPECT_EQ(b.toString(), "helloX");
+	a.apply(b.diff(a.frontline()));
+	EXPECT_EQ(a.toString(), "helloX");
+}

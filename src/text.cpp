@@ -1,3 +1,4 @@
+#include "text.hpp"
 #include "textcrdt.hpp"
 
 namespace {
@@ -39,6 +40,21 @@ size_t PlainText::insert(size_t pos, const std::string &text)
 size_t PlainText::insert(const Anchor &anchor, const std::string &text)
 {
 	Insertion op(doc.id(), doc.stamp(), anchor, text);
+	if (!doc.insert(op))
+		return 0;
+	undo_stack.push(op.stamp);
+	return op.stamp;
+}
+
+size_t PlainText::insertObject(size_t pos, const std::string &object_id)
+{
+	Anchor anchor = doc.insertAnchor(pos);
+	return insertObject(anchor, object_id);
+}
+
+size_t PlainText::insertObject(const Anchor &anchor, const std::string &object_id)
+{
+	Insertion op(doc.id(), doc.stamp(), anchor, "", object_id);
 	if (!doc.insert(op))
 		return 0;
 	undo_stack.push(op.stamp);

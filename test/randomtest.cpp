@@ -1,4 +1,4 @@
-﻿#include <gtest/gtest.h>
+#include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cassert>
@@ -455,4 +455,78 @@ TEST(RandomTest, DeleteUndoRedoRandom)
 TEST(RandomTest, HistoryDeleteUndoRedoRandom)
 {
 	runHistoryDeleteUndoRedoTest(50, 1000);
+}
+
+// two replicas insert/delete text and inline objects concurrently,
+// verify both converge to a shared reference model.
+// all content here is single-byte (ASCII text + 0xFF object marker), so
+// character offsets equal byte offsets.
+void runInlineObjectTest(int numOps)
+{
+	const std::string obj_marker = "\xFF";
+	std::random_device rd;
+	std::mt19937 gen(rd());
+
+	PlainText a;
+	PlainText b(a.origin());
+	SimpleText validator;
+	size_t tot_chars = 0;
+
+	for (int i = 0; i < numOps; ++i)
+	{
+		PlainText *target = (gen() % 2 == 0) ? &a : &b;
+		std::uniform_int_distribution<int> op_dist(0, 2);
+		switch (op_dist(gen))
+		{
+		case 0: // insert text
+		{
+			std::string str = generateRandomString(gen, 1, 5);
+			std::uniform_int_distribution<size_t> pos_dist(0, tot_chars);
+			size_t pos = pos_dist(gen);
+			validator.insert(pos, str);
+			target->insert(pos, str);
+			tot_chars += str.size();
+			break;
+		}
+		case 1: // insert inline object
+		{
+			std::string id = "obj_" + std::to_string(i);
+			std::uniform_int_distribution<size_t> pos_dist(0, tot_chars);
+			size_t pos = pos_dist(gen);
+			validator.insert(pos, obj_marker);
+			target->insertObject(pos, id);
+			++tot_chars;
+			break;
+		}
+		default: // delete a range
+		{
+			if (tot_chars == 0)
+			{
+				--i;
+				continue;
+			}
+			std::uniform_int_distribution<> len_dist(1, std::min<size_t>(20, tot_chars));
+			size_t len = len_dist(gen);
+			std::uniform_int_distribution<size_t> pos_dist(0, tot_chars - len);
+			size_t pos = pos_dist(gen);
+			validator.erase(pos, len);
+			target->del(pos, pos + len);
+			tot_chars -= len;
+			break;
+		}
+		}
+
+		// sync both ways
+		b.apply(a.diff(b.frontline()));
+		a.apply(b.diff(a.frontline()));
+
+		std::string expect = validator.toString();
+		EXPECT_EQ(a.toString(), expect) << "iteration " << i;
+		EXPECT_EQ(b.toString(), expect) << "iteration " << i;
+	}
+}
+
+TEST(RandomTest, InlineObjectRandom)
+{
+	runInlineObjectTest(200);
 }

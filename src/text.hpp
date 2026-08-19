@@ -45,6 +45,8 @@ public:
 	size_t insert(size_t pos, const std::string &text);
 	// size_t insert(size_t row, size_t column, const std::string &text);
 	size_t insert(const Anchor &anchor, const std::string &text);
+	size_t insertObject(size_t pos, const std::string &object_id);
+	size_t insertObject(const Anchor &anchor, const std::string &object_id);
 	size_t del(size_t begin, size_t end);
 	// size_t del(size_t row_begin, size_t column_begin, size_t row_end, size_t column_end);
 	size_t del(const ClosedRange &range);
@@ -119,6 +121,8 @@ public:
 	// edit, return operation stamp
 	size_t insert(size_t pos, const std::string &text);
 	size_t insert(const Anchor &anchor, const std::string &text);
+	size_t insertObject(size_t pos, const std::string &object_id);
+	size_t insertObject(const Anchor &anchor, const std::string &object_id);
 	size_t del(size_t begin, size_t end);
 	size_t del(const ClosedRange &range);
 	template <typename RangeType, typename T>
@@ -219,6 +223,23 @@ template <typename FormatProvider>
 size_t RichText<FormatProvider>::insert(const Anchor &anchor, const std::string &text)
 {
 	Insertion op(doc.id(), doc.stamp(), anchor, text);
+	if (!doc.insert(op))
+		return 0;
+	undo_stack.push(op.stamp);
+	return op.stamp;
+}
+
+template <typename FormatProvider>
+size_t RichText<FormatProvider>::insertObject(size_t pos, const std::string &object_id)
+{
+	Anchor anchor_val = doc.insertAnchor(pos);
+	return insertObject(anchor_val, object_id);
+}
+
+template <typename FormatProvider>
+size_t RichText<FormatProvider>::insertObject(const Anchor &anchor, const std::string &object_id)
+{
+	Insertion op(doc.id(), doc.stamp(), anchor, "", object_id);
 	if (!doc.insert(op))
 		return 0;
 	undo_stack.push(op.stamp);

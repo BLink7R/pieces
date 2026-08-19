@@ -136,7 +136,7 @@ EMSCRIPTEN_BINDINGS(my_module)
 	enum_<OperationType>("OperationType")
 		.value("Insert", OperationType::Insert)
 		.value("Delete", OperationType::Delete)
-		.value("Format", OperationType::Format)
+		.value("RangeFormat", OperationType::RangeFormat)
 		.value("Undo", OperationType::Undo)
 		.value("Redo", OperationType::Redo);
 
@@ -166,7 +166,8 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.field("type", &Operation::type)
 		// Insertion specific fields
 		.field("anchor", &Insertion::anchor)
-		.field("str", &Insertion::str);
+		.field("str", &Insertion::str)
+		.field("object_id", &Insertion::object_id);
 
 	value_object<Deletion>("Deletion")
 		// Base Operation fields
@@ -202,6 +203,8 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.function("slice", select_overload<std::string(size_t, size_t) const>(&PlainText::slice))
 		.function("insert", select_overload<size_t(size_t, const std::string &)>(&PlainText::insert))
 		.function("insertAnchor", select_overload<size_t(const Anchor &, const std::string &)>(&PlainText::insert))
+		.function("insertObject", select_overload<size_t(size_t, const std::string &)>(&PlainText::insertObject))
+		.function("insertObjectAnchor", select_overload<size_t(const Anchor &, const std::string &)>(&PlainText::insertObject))
 		.function("del", select_overload<size_t(size_t, size_t)>(&PlainText::del))
 		.function("delAnchor", select_overload<size_t(const ClosedRange &)>(&PlainText::del))
 		.function("toRange", &PlainText::toClosedRange)

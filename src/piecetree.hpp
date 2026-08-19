@@ -12,6 +12,8 @@
 #include "gb+tree.hpp"
 #include "storedop.hpp"
 
+struct Piece;
+
 // Text is stored in segments. Whenever text is inserted, a new segment is created,
 // and the target segment with the insertion offset is stored, keeping the target unchanged.
 // As user edits are usually small, and we need to implement anchor in 2 directions, we
@@ -67,26 +69,15 @@ struct Segment : public StoredContent
 		return OperationType::Insert;
 	}
 
+	const char *rawData() const override
+	{
+		return data.get();
+	}
+
+	// if anchor is normal, return the piece before the position
+	// if anchor is reversed, return the piece after the position
 	auto pieceAt(int32_t position) const;
 	auto insertPiece(Piece *piece);
-
-	auto insertSegment(Segment *segment)
-	{ // TODO: we can change it to std::find if segment is small
-		auto it = std::lower_bound(
-			child.begin(), child.end(), segment,
-			[](const StoredContent *a, const StoredContent *b)
-		{
-			if (a->anchor.segPos() != b->anchor.segPos())
-				return a->anchor.segPos() < b->anchor.segPos();
-			if (a->anchor.pos != b->anchor.pos) // reversed vs normal, normal goes first
-				return a->anchor.pos > b->anchor.pos;
-			if (a->anchor.pos > 0)
-				return *a < *b; // normal: earlier goes first
-			else
-				return *b < *a; // reversed: later goes first
-		});
-		return child.insert(it, segment);
-	}
 
 	size_t findLineBreak(size_t utf8_offset) const
 	{
@@ -140,18 +131,18 @@ struct PieceInfo
 // TODO: limit the length of piece, as the split operation is O(n) in the length of piece.
 struct Piece
 {
-	Segment *seg{nullptr};
+	StoredContent *seg{nullptr};
 	const char *data{nullptr};
-	int32_t len{0};
-	int32_t seg_pos{0};
+	uint32_t len{0};
+	uint32_t seg_pos{0};
 	StoredRangeOp *tombStone{nullptr};
 	Formats styles;
 
 	Piece() = default;
-	Piece(Segment *seg)
+	Piece(StoredContent *seg)
 		: seg(seg),
-		  data(seg->data.get()),
-		  len(seg->len),
+		  data(seg->rawData()),
+		  len(static_cast<uint32_t>(seg->len)),
 		  seg_pos(0) {}
 
 	bool isRemoved() const
@@ -167,9 +158,60 @@ struct Piece
 
 	bool operator<(const Piece &other) const
 	{
-		return data < other.data;
+		return seg < other.seg;
 	}
 };
+
+// placeholder char serialized for inline objects.
+// currently a single byte (0xFF) so the char-based len == byte-based serialization holds;
+// multi-byte serialization is handled separately later.
+inline const char *objectPlaceholder()
+{
+	static const char placeholder[] = "\xFF";
+	return placeholder;
+}
+
+// inline objects (image/shape/table) are atomic len-1 contents: never split, so a single
+// piece pointer is enough. The payload is referenced by an external id and is not
+// replicated inside the text CRDT.
+struct StoredObject : public StoredContent
+{
+	std::string id;	// reference to the external object data
+	Piece *piece{nullptr}; // the single piece derived from this object
+
+	StoredObject(std::string id)
+		: StoredContent(), id(std::move(id))
+	{
+		len = 1;
+	}
+
+	bool isObject() const override
+	{
+		return true;
+	}
+
+	const char *rawData() const override
+	{
+		return objectPlaceholder();
+	}
+};
+
+// the first/last piece derived from a content (single piece for inline objects)
+inline Piece *firstPiece(StoredContent *content)
+{
+	if (content->isObject())
+		return static_cast<StoredObject *>(content)->piece;
+	auto &pieces = static_cast<Segment *>(content)->split_piece;
+	return pieces.empty() ? nullptr : pieces.front();
+}
+
+inline Piece *lastPiece(StoredContent *content)
+{
+	if (content->isObject())
+		return static_cast<StoredObject *>(content)->piece;
+	auto &pieces = static_cast<Segment *>(content)->split_piece;
+	return pieces.empty() ? nullptr : pieces.back();
+}
 
 // if anchor is normal, return the piece before the position
 // if anchor is reversed, return the piece after the position
@@ -249,11 +291,21 @@ public:
 	// if anchor is reversed, return the piece after the position
 	Iterator find(const StoredAnchor &anchor) const
 	{
-		Segment *seg = anchor.seg;
-		auto piece_it = seg->pieceAt(anchor.pos);
-		if (piece_it == seg->split_piece.end())
-			return this->end();
-		return Iterator(*piece_it);
+		StoredContent *seg = anchor.seg;
+		Piece *piece = nullptr;
+		if (seg->isObject())
+		{ // atomic object, exactly one piece
+			piece = static_cast<StoredObject *>(seg)->piece;
+		}
+		else
+		{
+			auto *text_seg = static_cast<Segment *>(seg);
+			auto piece_it = text_seg->pieceAt(anchor.pos);
+			if (piece_it == text_seg->split_piece.end())
+				return this->end();
+			piece = *piece_it;
+		}
+		return piece ? Iterator(piece) : this->end();
 	}
 
 	size_t historyPos(const StoredAnchor &anchor) const
@@ -262,15 +314,15 @@ public:
 		return it.position().total + (anchor.segPos() - it->seg_pos);
 	}
 
-	Iterator insert(Segment *segment)
+	Iterator insert(StoredContent *segment)
 	{
 		StoredAnchor anchor = segment->anchor;
-		Segment *parent = anchor.seg;
+		StoredContent *parent = anchor.seg;
 		assert(parent != nullptr);
 		auto piece_it = find(anchor);
 		assert(piece_it != this->end());
 		int32_t pos = static_cast<int32_t>(anchor.segPos() - piece_it->seg_pos);
-		auto conflict_it = parent->insertSegment(segment);
+		auto conflict_it = parent->insertContent(segment);
 		Piece new_node(segment);
 		// handle insertion ambiguity
 		if (pos == 0)
@@ -278,7 +330,7 @@ public:
 			Piece *piece = &*piece_it;
 			if (conflict_it + 1 != parent->child.end())
 			{
-				Segment *after = *(conflict_it + 1);
+				StoredContent *after = *(conflict_it + 1);
 				if (after->anchor.pos == anchor.pos) // has conflict
 				{
 					for (; !after->child.empty(); after = after->child[0])
@@ -286,7 +338,7 @@ public:
 						if (after->child[0]->anchor.pos != 0)
 							break;
 					}
-					piece = after->split_piece[0];
+					piece = firstPiece(after);
 				}
 			}
 			piece_it = this->insertBefore(Iterator(piece), new_node);
@@ -296,7 +348,7 @@ public:
 			Piece *piece = &*piece_it;
 			if (conflict_it != parent->child.begin())
 			{
-				Segment *before = *(conflict_it - 1);
+				StoredContent *before = *(conflict_it - 1);
 				if (before->anchor.pos == anchor.pos) // has conflict
 				{
 					for (; !before->child.empty(); before = before->child.back())
@@ -304,7 +356,7 @@ public:
 						if (before->child.back()->anchor.pos != before->len)
 							break;
 					}
-					piece = before->split_piece.back();
+					piece = lastPiece(before);
 				}
 			}
 			piece_it = this->insertAfter(Iterator(piece), new_node);
@@ -314,7 +366,10 @@ public:
 			piece_it = split(piece_it, pos);
 			piece_it = this->insertBefore(piece_it, new_node);
 		}
-		segment->insertPiece(&*piece_it);
+		if (segment->isObject())
+			static_cast<StoredObject *>(segment)->piece = &*piece_it;
+		else
+			static_cast<Segment *>(segment)->insertPiece(&*piece_it);
 		return piece_it;
 	}
 
@@ -338,64 +393,7 @@ public:
 		this->update(it, it);
 
 		auto new_it = this->insertAfter(it, new_node);
-		it->seg->insertPiece(&*new_it);
+		static_cast<Segment *>(it->seg)->insertPiece(&*new_it); // split only applies to text pieces
 		return new_it;
-	}
-};
-
-template <uint8_t N>
-class RangeTree : public OrderedSet<RangeTag, N>
-{
-public:
-	using Base = OrderedSet<RangeTag, N>;
-	using Iterator = typename Base::Iterator;
-	using Node = typename Base::Node;
-	using InternalNode = typename Base::InternalNode;
-	using LeafNode = typename Base::LeafNode;
-
-	RangeTree() = default;
-	~RangeTree() = default;
-
-	// should ganrantee left.anchor < right.anchor
-	template <typename PieceTree>
-	auto apply(RangeTag left, RangeTag right, PieceTree &piece_tree)
-	{
-		// left and right can be on the same piece, so we need to split right first
-		auto begin = this->addTag<true>(left, piece_tree);
-		auto end = this->addTag<false>(right, piece_tree);
-		return std::make_pair(begin, end);
-	}
-
-protected:
-	template <bool IsLeft, typename PieceTree>
-	auto addTag(RangeTag tag, PieceTree &piece_tree)
-	{
-		auto piece_it = piece_tree.find(tag.anchor);
-		int32_t pos = tag.anchor.segPos() - piece_it->seg_pos;
-		if (pos == piece_it->len)
-			++piece_it;
-		else if (pos > 0)
-			piece_it = piece_tree.split(piece_it, pos);
-
-		size_t history_pos = piece_it.position().total;
-
-		auto it = this->insert(std::move(tag),
-							   [&piece_tree, history_pos](const RangeTag &a, const RangeTag &b)
-		{
-			size_t a_pos = piece_tree.historyPos(a.anchor);
-			if (a_pos != history_pos)
-				return a_pos < history_pos;
-			// new right tag-----  -----new left tag
-			// old right tag--- |  | ---old left tag
-			//  (prev piece]  | |  | |  [next piece)
-			// -------------------------- covered old range op
-			if (a.is_left != b.is_left)
-				return b.is_left;
-			else if (a.is_left)
-				return *b.cur < *a.cur;
-			else
-				return *a.cur < *b.cur;
-		});
-		return it;
 	}
 };

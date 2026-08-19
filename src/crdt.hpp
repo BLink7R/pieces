@@ -112,11 +112,12 @@ struct ClosedRange
 struct Insertion : public Operation
 {
 	Anchor anchor;
-	std::string str;
+	std::string str;		 // text payload, empty when inserting an inline object
+	std::string object_id;	 // non-empty when inserting an inline object (image/shape) reference
 
 	Insertion() = default;
-	Insertion(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor, std::string text)
-		: Operation(replica, stamp, OperationType::Insert), anchor(anchor), str(std::move(text)) {}
+	Insertion(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor, std::string text, std::string object_id = {})
+		: Operation(replica, stamp, OperationType::Insert), anchor(anchor), str(std::move(text)), object_id(std::move(object_id)) {}
 };
 
 // All ranges are inclusive on the left side, but the right side can be inclusive or exclusive.

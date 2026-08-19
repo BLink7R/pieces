@@ -1,15 +1,17 @@
 #pragma once
 
 #include <cassert>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "crdt.hpp"
 #include "taggedptr.hpp"
 
 struct Replica;
-struct Piece;
 struct StoredAnchor;
-struct StoredContent;
 struct StoredOperation;
+struct StoredContent;
 struct StoredRangeOp;
 struct StoredDeletion;
 
@@ -147,6 +149,37 @@ struct StoredContent : public UndoRedoableOp
 	OperationType type() const override
 	{
 		return OperationType::Insert;
+	}
+
+	// serialize the content as a null-terminated string.
+	// text segments return the text buffer, inline objects return a placeholder char.
+	virtual const char *rawData() const
+	{
+		return nullptr;
+	}
+
+	// whether the content is an inline object (image/shape) instead of plain text
+	virtual bool isObject() const
+	{
+		return false;
+	}
+
+	auto insertContent(StoredContent *content)
+	{ // TODO: we can change it to std::find if segment is small
+		auto it = std::lower_bound(
+			child.begin(), child.end(), content,
+			[](const StoredContent *a, const StoredContent *b)
+		{
+			if (a->anchor.segPos() != b->anchor.segPos())
+				return a->anchor.segPos() < b->anchor.segPos();
+			if (a->anchor.pos != b->anchor.pos) // reversed vs normal, normal goes first
+				return a->anchor.pos > b->anchor.pos;
+			if (a->anchor.pos > 0)
+				return *a < *b; // normal: earlier goes first
+			else
+				return *b < *a; // reversed: later goes first
+		});
+		return child.insert(it, content);
 	}
 };
 

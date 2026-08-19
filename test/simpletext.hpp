@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "piecetree.hpp"
+#include "rangetree.hpp"
+#include "textcrdt.hpp"
 
 class SimpleText
 {
@@ -261,7 +263,7 @@ public:
 	template <typename Doc>
 	bool apply(Doc *doc, const Operation &op)
 	{
-		if (op.type != OperationType::Format)
+		if (op.type != OperationType::RangeFormat)
 			return false;
 		const auto &fmt_op = static_cast<const Formatting<OpenedRange, int> &>(op);
 		return doc->format(fmt_op);
@@ -279,8 +281,8 @@ public:
 		Anchor anchor_begin;
 		if (!it_begin.isNull())
 		{ // begin is reversed
-			Segment *seg = it_begin->seg;
-			anchor_begin = Anchor(seg->operationID(), start - it_begin.position().total + it_begin->seg_pos - seg->len);
+			StoredContent *seg = it_begin->seg;
+			anchor_begin = Anchor(seg->operationID(), static_cast<int32_t>(static_cast<int64_t>(start) - it_begin.position().total + it_begin->seg_pos - seg->len));
 		}
 		Anchor anchor_end;
 		if (!it_end.isNull())
@@ -289,8 +291,8 @@ public:
 			{
 				--end;
 			}
-			Segment *seg = it_end->seg;
-			anchor_end = Anchor(seg->operationID(), end - it_end.position().total + it_end->seg_pos);
+			StoredContent *seg = it_end->seg;
+			anchor_end = Anchor(seg->operationID(), static_cast<int32_t>(static_cast<int64_t>(end) - it_end.position().total + it_end->seg_pos));
 		}
 		return ClosedRange(anchor_begin, anchor_end);
 	}
@@ -299,7 +301,9 @@ public:
 	{
 		std::string total_str;
 		std::vector<int> delete_count;
-		size_t total_size = (--end()).position().total;
+		auto end_it = end();
+		--end_it;
+		size_t total_size = end_it.position().total;
 		total_str.reserve(total_size);
 		delete_count.resize(total_size, false);
 		for (auto it = this->begin(), end_it = this->end(); it != end_it; ++it)

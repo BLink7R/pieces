@@ -5,6 +5,7 @@
 #include <unordered_set>
 
 #include "piecetree.hpp"
+#include "rangetree.hpp"
 #include "taggedptr.hpp"
 
 template <typename FormatProvider = void>
@@ -108,7 +109,7 @@ public:
 		auto it = piece_tree.lower_bound(pos);
 		if (it.isNull())
 			return anchor;
-		Segment *seg = it->seg;
+		StoredContent *seg = it->seg;
 		anchor.replica = seg->replica->id;
 		anchor.stamp = seg->stamp;
 		anchor.pos = static_cast<int32_t>(pos - it.position().visible + it->seg_pos);
@@ -121,10 +122,10 @@ public:
 		auto it = piece_tree.upper_bound(pos);
 		if (it.isNull())
 			return anchor;
-		Segment *seg = it->seg;
+		StoredContent *seg = it->seg;
 		anchor.replica = seg->replica->id;
 		anchor.stamp = seg->stamp;
-		anchor.pos = static_cast<int32_t>(pos - it.position().visible + it->seg_pos - seg->len);
+		anchor.pos = static_cast<int32_t>(static_cast<int64_t>(pos) - it.position().visible + it->seg_pos - seg->len);
 		return anchor;
 	}
 
@@ -136,29 +137,29 @@ public:
 		Anchor anchor;
 		if (pos > 0 && pos == it.position().visible)
 		{ // as begining of the piece
-			Segment *seg_right = it->seg;
+			StoredContent *seg_right = it->seg;
 			auto it_before = it;
 			--it_before;
-			Segment *seg_left = it_before->seg;
+			StoredContent *seg_left = it_before->seg;
 			if (seg_left == seg_right || *seg_left < *seg_right)
 			{ // right is newer
 				anchor.replica = seg_right->replica->id;
 				anchor.stamp = seg_right->stamp;
-				anchor.pos = it->seg_pos - seg_right->len; // reversed anchor
+				anchor.pos = static_cast<int32_t>(it->seg_pos) - seg_right->len; // reversed anchor
 			}
 			else
 			{ // left is newer
 				anchor.replica = seg_left->replica->id;
 				anchor.stamp = seg_left->stamp;
-				anchor.pos = it_before->seg_pos + it_before->len; // normal anchor
+				anchor.pos = static_cast<int32_t>(it_before->seg_pos + it_before->len); // normal anchor
 			}
 		}
 		else
 		{ // when inside the piece, we prefer to insert before the character
-			Segment *seg = it->seg;
+			StoredContent *seg = it->seg;
 			anchor.replica = seg->replica->id;
 			anchor.stamp = seg->stamp;
-			anchor.pos = static_cast<int32_t>(pos - it.position().visible + it->seg_pos - seg->len); // reversed anchor
+			anchor.pos = static_cast<int32_t>(static_cast<int64_t>(pos) - it.position().visible + it->seg_pos - seg->len); // reversed anchor
 		}
 		return anchor;
 	}
@@ -172,7 +173,7 @@ public:
 		if (it->isRemoved())
 			return it.position().visible;
 		// it.position().visible is the start of the piece, add the pos within the piece
-		return it.position().visible + (stored.segPos() - it->seg_pos);
+		return it.position().visible + (stored.segPos() - static_cast<int32_t>(it->seg_pos));
 	}
 
 	std::vector<OperationID> frontline() const
@@ -211,11 +212,14 @@ public:
 				{
 				case OperationType::Insert:
 				{
-					const auto *seg = static_cast<const Segment *>(stored);
-					assert(seg->anchor.seg != nullptr);
-					const auto *parent = seg->anchor.seg;
-					Anchor anchor(parent->operationID(), seg->anchor.pos);
-					res.push_back(std::make_unique<Insertion>(replica.id, i, anchor, std::string(seg->data.get())));
+					const auto *content = static_cast<const StoredContent *>(stored);
+					assert(content->anchor.seg != nullptr);
+					const auto *parent = content->anchor.seg;
+					Anchor anchor(parent->operationID(), content->anchor.pos);
+					if (content->isObject())
+						res.push_back(std::make_unique<Insertion>(replica.id, i, anchor, std::string(), static_cast<const StoredObject *>(content)->id));
+					else
+						res.push_back(std::make_unique<Insertion>(replica.id, i, anchor, std::string(content->rawData())));
 					break;
 				}
 				case OperationType::Delete:
@@ -266,7 +270,7 @@ public:
 			return undo(static_cast<const UndoOperation &>(op));
 		case OperationType::Redo:
 			return redo(static_cast<const RedoOperation &>(op));
-		case OperationType::Format:
+		case OperationType::RangeFormat:
 			if constexpr (!std::is_same_v<FormatProvider, void>)
 				return format_provider.apply(this, op);
 			else
@@ -279,13 +283,15 @@ public:
 
 	bool insert(const Insertion &op)
 	{
-		if (op.str.empty())
+		if (op.str.empty() && op.object_id.empty())
 			return false; // no-op
 		auto anchor = toStored(op.anchor);
 		if (anchor.seg == nullptr)
 			return false; // invalid anchor
 
-		Segment *segment = storeOp<Segment>(op.replica, op.stamp, op.str);
+		StoredContent *segment = op.object_id.empty()
+									 ? static_cast<StoredContent *>(storeOp<Segment>(op.replica, op.stamp, op.str))
+									 : static_cast<StoredContent *>(storeOp<StoredObject>(op.replica, op.stamp, op.object_id));
 		if (segment == nullptr)
 			return false; // duplicate operation
 
@@ -422,12 +428,12 @@ private:
 		switch (target->type())
 		{
 		case OperationType::Insert:
-			redoInsertion(static_cast<Segment *>(target));
+			redoInsertion(static_cast<StoredContent *>(target));
 			break;
 		case OperationType::Delete:
 			redoDel(static_cast<StoredDeletion *>(target));
 			break;
-		case OperationType::Format:
+		case OperationType::RangeFormat:
 			if constexpr (!std::is_same_v<FormatProvider, void>)
 				redoFormat(static_cast<StoredRangeOp *>(target));
 			else
@@ -451,12 +457,12 @@ private:
 		switch (target->type())
 		{
 		case OperationType::Insert:
-			undoInsertion(static_cast<Segment *>(target));
+			undoInsertion(static_cast<StoredContent *>(target));
 			break;
 		case OperationType::Delete:
 			undoDel(static_cast<StoredDeletion *>(target));
 			break;
-		case OperationType::Format:
+		case OperationType::RangeFormat:
 			if constexpr (!std::is_same_v<FormatProvider, void>)
 				undoFormat(static_cast<StoredRangeOp *>(target));
 			else
@@ -666,15 +672,15 @@ private:
 		}
 	}
 
-	void redoInsertion(Segment *target)
+	void redoInsertion(StoredContent *target)
 	{
-		if (target->undo_op != nullptr)
-			undoDel(target->undo_op.get());
+		if (target->undo_del != nullptr)
+			undoDel(target->undo_del.get());
 	}
 
-	void undoInsertion(Segment *target)
+	void undoInsertion(StoredContent *target)
 	{
-		if (target->undo_op == nullptr)
+		if (target->undo_del == nullptr)
 		{
 			auto stored_op = new StoredDeletion();
 			stored_op->replica = target->replica;
@@ -687,9 +693,9 @@ private:
 			stored_op->left = &*left_it;
 			stored_op->right = &*right_it;
 
-			target->undo_op.reset(stored_op);
+			target->undo_del.reset(stored_op);
 		}
-		redoDel(target->undo_op.get());
+		redoDel(target->undo_del.get());
 	}
 
 	template <typename UpdateFunc>
@@ -914,7 +920,7 @@ private:
 		if (!seg_ptr || seg_ptr->type() != OperationType::Insert)
 			return StoredAnchor();
 
-		Segment *seg = static_cast<Segment *>(seg_ptr.get());
+		StoredContent *seg = static_cast<StoredContent *>(seg_ptr.get());
 		if (anchor.pos == 0 || seg->len < std::abs(anchor.pos))
 			return StoredAnchor();
 
