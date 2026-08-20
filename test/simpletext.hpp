@@ -282,17 +282,17 @@ public:
 		if (!it_begin.isNull())
 		{ // begin is reversed
 			StoredContent *seg = it_begin->seg;
-			anchor_begin = Anchor(seg->operationID(), static_cast<int32_t>(static_cast<int64_t>(start) - it_begin.position().total + it_begin->seg_pos - seg->len));
+			anchor_begin = Anchor(seg->operationID(), static_cast<int32_t>(static_cast<int64_t>(start) - it_begin.position().total + it_begin->seg_offset - seg->size));
 		}
 		Anchor anchor_end;
 		if (!it_end.isNull())
 		{
-			if (end - it_end.position().total + it_end->seg_pos == 0)
+			if (end - it_end.position().total + it_end->seg_offset == 0)
 			{
 				--end;
 			}
 			StoredContent *seg = it_end->seg;
-			anchor_end = Anchor(seg->operationID(), static_cast<int32_t>(static_cast<int64_t>(end) - it_end.position().total + it_end->seg_pos));
+			anchor_end = Anchor(seg->operationID(), static_cast<int32_t>(static_cast<int64_t>(end) - it_end.position().total + it_end->seg_offset));
 		}
 		return ClosedRange(anchor_begin, anchor_end);
 	}
@@ -314,7 +314,7 @@ public:
 		//
 		// for (const auto& tag: deletions)
 		// {
-		// 	std::cout << piece_tree.historyPos(tag.anchor) << " id " << tag.cur->replica << " pos " << tag.anchor.pos << "\n";
+		// 	std::cout << piece_tree.historyOffset(tag.anchor) << " id " << tag.cur->replica << " offset " << tag.anchor.offset << "\n";
 		// }
 		for (const auto &replica : replicas)
 		{
@@ -330,8 +330,8 @@ public:
 					auto &left = del->left->anchor;
 					auto &right = del->right->anchor;
 
-					size_t start = piece_tree.historyPos(del->left->anchor);
-					size_t end = piece_tree.historyPos(del->right->anchor);
+					size_t start = piece_tree.historyOffset(del->left->anchor);
+					size_t end = piece_tree.historyOffset(del->right->anchor);
 
 					for (size_t k = start; k < end; ++k)
 					{

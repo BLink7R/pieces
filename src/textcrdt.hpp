@@ -78,9 +78,9 @@ public:
 		return piece_tree.end();
 	}
 
-	Iterator find(size_t pos) const
+	Iterator find(size_t offset) const
 	{
-		return piece_tree.upper_bound(pos);
+		return piece_tree.upper_bound(offset);
 	}
 
 	auto size() const
@@ -102,41 +102,41 @@ public:
 		return res;
 	}
 
-	Anchor anchor(size_t pos) const
+	Anchor anchor(size_t offset) const
 	{
 		Anchor anchor;
-		if (pos == 0)
+		if (offset == 0)
 			return anchor;
-		auto it = piece_tree.lower_bound(pos);
+		auto it = piece_tree.lower_bound(offset);
 		if (it.isNull())
 			return anchor;
 		StoredContent *seg = it->seg;
 		anchor.replica = seg->replica->id;
 		anchor.stamp = seg->stamp;
-		anchor.pos = static_cast<int32_t>(pos - it.position().visible + it->seg_pos);
+		anchor.offset = static_cast<int32_t>(offset - it.position().visible + it->seg_offset);
 		return anchor;
 	}
 
-	Anchor reversedAnchor(size_t pos) const
+	Anchor reversedAnchor(size_t offset) const
 	{
 		Anchor anchor;
-		auto it = piece_tree.upper_bound(pos);
+		auto it = piece_tree.upper_bound(offset);
 		if (it.isNull())
 			return anchor;
 		StoredContent *seg = it->seg;
 		anchor.replica = seg->replica->id;
 		anchor.stamp = seg->stamp;
-		anchor.pos = static_cast<int32_t>(static_cast<int64_t>(pos) - it.position().visible + it->seg_pos - seg->len);
+		anchor.offset = static_cast<int32_t>(static_cast<int64_t>(offset) - it.position().visible + it->seg_offset - seg->size);
 		return anchor;
 	}
 
 	// implement the [Fugue](https://arxiv.org/abs/2305.00583) algorithm to solve the interleaving problem.
 	// brief of this algorithm: always attach the insertion to the newer piece at left/right.
-	Anchor insertAnchor(size_t pos) const
+	Anchor insertAnchor(size_t offset) const
 	{
-		auto it = piece_tree.upper_bound(pos);
+		auto it = piece_tree.upper_bound(offset);
 		Anchor anchor;
-		if (pos > 0 && pos == it.position().visible)
+		if (offset > 0 && offset == it.position().visible)
 		{ // as begining of the piece
 			StoredContent *seg_right = it->seg;
 			auto it_before = it;
@@ -146,13 +146,13 @@ public:
 			{ // right is newer
 				anchor.replica = seg_right->replica->id;
 				anchor.stamp = seg_right->stamp;
-				anchor.pos = static_cast<int32_t>(it->seg_pos) - seg_right->len; // reversed anchor
+				anchor.offset = static_cast<int32_t>(it->seg_offset) - seg_right->size; // reversed anchor
 			}
 			else
 			{ // left is newer
 				anchor.replica = seg_left->replica->id;
 				anchor.stamp = seg_left->stamp;
-				anchor.pos = static_cast<int32_t>(it_before->seg_pos + it_before->len); // normal anchor
+				anchor.offset = static_cast<int32_t>(it_before->seg_offset + it_before->len); // normal anchor
 			}
 		}
 		else
@@ -160,12 +160,12 @@ public:
 			StoredContent *seg = it->seg;
 			anchor.replica = seg->replica->id;
 			anchor.stamp = seg->stamp;
-			anchor.pos = static_cast<int32_t>(static_cast<int64_t>(pos) - it.position().visible + it->seg_pos - seg->len); // reversed anchor
+			anchor.offset = static_cast<int32_t>(static_cast<int64_t>(offset) - it.position().visible + it->seg_offset - seg->size); // reversed anchor
 		}
 		return anchor;
 	}
 
-	size_t pos(const Anchor &anchor) const
+	size_t offset(const Anchor &anchor) const
 	{
 		StoredAnchor stored = toStored(anchor);
 		if (stored.seg == nullptr)
@@ -173,8 +173,8 @@ public:
 		auto it = piece_tree.find(stored);
 		if (it->isRemoved())
 			return it.position().visible;
-		// it.position().visible is the start of the piece, add the pos within the piece
-		return it.position().visible + (stored.segPos() - static_cast<int32_t>(it->seg_pos));
+		// it.position().visible is the start of the piece, add the offset within the piece
+		return it.position().visible + (stored.segOffset() - static_cast<int32_t>(it->seg_offset));
 	}
 
 	std::vector<OperationID> frontline() const
@@ -216,7 +216,7 @@ public:
 					const auto *content = static_cast<const StoredContent *>(stored);
 					assert(content->anchor.seg != nullptr);
 					const auto *parent = content->anchor.seg;
-					Anchor anchor(parent->operationID(), content->anchor.pos);
+					Anchor anchor(parent->operationID(), content->anchor.offset);
 					if (content->isObject())
 						res.push_back(std::make_unique<Insertion<CharT>>(replica.id, i, anchor, String(), static_cast<const StoredObject<CharT> *>(content)->id));
 					else
@@ -690,8 +690,8 @@ private:
 			stored_op->replica = target->replica;
 			stored_op->stamp = target->stamp;
 
-			auto begin = StoredAnchor(target, -target->len);
-			auto end = StoredAnchor(target, target->len);
+			auto begin = StoredAnchor(target, -target->size);
+			auto end = StoredAnchor(target, target->size);
 			auto [left_it, right_it] = deletions.apply(
 				RangeTag(true, begin, stored_op), RangeTag(false, end, stored_op), piece_tree);
 			stored_op->left = &*left_it;
@@ -826,7 +826,7 @@ private:
 			// update piece tree
 			if (it->anchor.isReversed())
 			{
-				for (; begin_piece->seg != it->anchor.seg || begin_piece->seg_pos != it->anchor.segPos(); ++begin_piece)
+				for (; begin_piece->seg != it->anchor.seg || begin_piece->seg_offset != it->anchor.segOffset(); ++begin_piece)
 				{
 					updateFunc(&*begin_piece, newest);
 				}
@@ -836,7 +836,7 @@ private:
 				for (;; ++begin_piece)
 				{
 					updateFunc(&*begin_piece, newest);
-					if (begin_piece->seg == it->anchor.seg && begin_piece->seg_pos + begin_piece->len == it->anchor.pos)
+					if (begin_piece->seg == it->anchor.seg && begin_piece->seg_offset + begin_piece->len == it->anchor.offset)
 						break;
 				}
 			}
@@ -925,10 +925,10 @@ private:
 			return StoredAnchor();
 
 		StoredContent *seg = static_cast<StoredContent *>(seg_ptr.get());
-		if (anchor.pos == 0 || seg->len < std::abs(anchor.pos))
+		if (anchor.offset == 0 || seg->size < std::abs(anchor.offset))
 			return StoredAnchor();
 
-		return StoredAnchor(seg, anchor.pos);
+		return StoredAnchor(seg, anchor.offset);
 	}
 
 	template <typename T, typename... Args>

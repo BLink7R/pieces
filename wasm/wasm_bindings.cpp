@@ -147,7 +147,7 @@ EMSCRIPTEN_BINDINGS(my_module)
 	value_object<Anchor>("Anchor")
 		.field("replica", &getAnchorReplica, &setAnchorReplica)
 		.field("stamp", &Anchor::stamp)
-		.field("pos", &Anchor::pos);
+		.field("offset", &Anchor::offset);
 
 	value_object<OpenedRange>("OpenedRange")
 		.field("begin", &OpenedRange::begin)
@@ -209,7 +209,7 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.function("delAnchor", select_overload<size_t(const ClosedRange &)>(&PlainText<char16_t>::del))
 		.function("toRange", &PlainText<char16_t>::toClosedRange)
 		.function("toAnchor", &PlainText<char16_t>::toAnchor)
-		.function("toOffset", &PlainText<char16_t>::toPos)
+		.function("toOffset", &PlainText<char16_t>::toOffset)
 		.function("undo", &PlainText<char16_t>::undo)
 		.function("redo", &PlainText<char16_t>::redo)
 		.function("canUndo", &PlainText<char16_t>::canUndo)

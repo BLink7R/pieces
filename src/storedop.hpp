@@ -41,37 +41,37 @@ struct Replica
 struct StoredAnchor
 {
 	StoredContent *seg{nullptr};
-	int32_t pos{0};
+	int32_t offset{0};
 
 	StoredAnchor() = default;
-	StoredAnchor(StoredContent *seg, int32_t pos)
-		: seg(seg), pos(pos)
+	StoredAnchor(StoredContent *seg, int32_t offset)
+		: seg(seg), offset(offset)
 	{
-		assert(seg != nullptr && pos != 0);
+		assert(seg != nullptr && offset != 0);
 	}
 
 	bool isNull() const
 	{
-		return pos == 0;
+		return offset == 0;
 	}
 
 	bool isReversed() const
 	{
-		return pos < 0;
+		return offset < 0;
 	}
 
 	bool operator==(const StoredAnchor &other) const
 	{
-		return seg == other.seg && pos == other.pos;
+		return seg == other.seg && offset == other.offset;
 	}
 
 	bool operator!=(const StoredAnchor &other) const
 	{
-		return seg != other.seg || pos != other.pos;
+		return seg != other.seg || offset != other.offset;
 	}
 
 	// return distance to segment start
-	int32_t segPos() const;
+	int32_t segOffset() const;
 	Anchor toAnchor() const;
 };
 
@@ -137,12 +137,12 @@ struct StoredRedo : public StoredOperation
 	}
 };
 
-// inline shapes and tables are also StoredContents, but has a len of 1
-// the derived classes must have a len >= 1
+// inline shapes and tables are also StoredContents, but has a size of 1
+// the derived classes must have a size >= 1
 struct StoredContent : public UndoRedoableOp
 {
 	StoredAnchor anchor;
-	int len;
+	int size;
 	mutable std::vector<StoredContent *> child;				   // as segments are usually small, vector is faster
 	mutable std::unique_ptr<StoredDeletion> undo_del{nullptr}; // when insertion is undone, it needs an extra deletion
 
@@ -163,11 +163,11 @@ struct StoredContent : public UndoRedoableOp
 			child.begin(), child.end(), content,
 			[](const StoredContent *a, const StoredContent *b)
 		{
-			if (a->anchor.segPos() != b->anchor.segPos())
-				return a->anchor.segPos() < b->anchor.segPos();
-			if (a->anchor.pos != b->anchor.pos) // reversed vs normal, normal goes first
-				return a->anchor.pos > b->anchor.pos;
-			if (a->anchor.pos > 0)
+			if (a->anchor.segOffset() != b->anchor.segOffset())
+				return a->anchor.segOffset() < b->anchor.segOffset();
+			if (a->anchor.offset != b->anchor.offset) // reversed vs normal, normal goes first
+				return a->anchor.offset > b->anchor.offset;
+			if (a->anchor.offset > 0)
 				return *a < *b; // normal: earlier goes first
 			else
 				return *b < *a; // reversed: later goes first
@@ -181,13 +181,13 @@ inline Anchor StoredAnchor::toAnchor() const
 	Anchor anchor;
 	anchor.replica = seg->replica->id;
 	anchor.stamp = seg->stamp;
-	anchor.pos = pos;
+	anchor.offset = offset;
 	return anchor;
 }
 
-inline int32_t StoredAnchor::segPos() const
+inline int32_t StoredAnchor::segOffset() const
 {
-	return pos < 0 ? seg->len + pos : pos;
+	return offset < 0 ? seg->size + offset : offset;
 }
 
 enum class TagStatus : uint8_t

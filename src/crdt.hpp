@@ -54,38 +54,38 @@ struct Operation
 };
 
 // Anchor has 2 types: after a character (normal), before a character (reversed).
-// This is represented by the sign of pos:
-// 	pos > 0 - after the character at pos
-// 	pos < 0 - before the character at backward |pos|
+// This is represented by the sign of offset:
+// 	offset > 0 - after the character at offset
+// 	offset < 0 - before the character at backward |offset|
 // For example: "abc"
-// pos = 1 -> a]bc (after 'a')
-// pos = -1 -> ab[c (before 'c')
-// pos = 0 is invalid, so it requires that all segments are non-empty.
+// offset = 1 -> a]bc (after 'a')
+// offset = -1 -> ab[c (before 'c')
+// offset = 0 is invalid, so it requires that all segments are non-empty.
 struct Anchor
 {
 	ReplicaID replica{};
 	uint32_t stamp{0};
-	int32_t pos{0};
+	int32_t offset{0};
 
-	Anchor(ReplicaID replica = {}, uint32_t stamp = 0, int32_t pos = 0)
-		: replica(replica), stamp(stamp), pos(pos) {}
+	Anchor(ReplicaID replica = {}, uint32_t stamp = 0, int32_t offset = 0)
+		: replica(replica), stamp(stamp), offset(offset) {}
 
-	Anchor(OperationID opID, int32_t pos)
-		: replica(opID.replica), stamp(opID.stamp), pos(pos) {}
+	Anchor(OperationID opID, int32_t offset)
+		: replica(opID.replica), stamp(opID.stamp), offset(offset) {}
 
 	bool operator==(const Anchor &other) const
 	{
-		return replica == other.replica && stamp == other.stamp && pos == other.pos;
+		return replica == other.replica && stamp == other.stamp && offset == other.offset;
 	}
 
 	bool isNull() const
 	{
-		return pos == 0;
+		return offset == 0;
 	}
 
 	bool isReversed() const
 	{
-		return pos < 0;
+		return offset < 0;
 	}
 };
 

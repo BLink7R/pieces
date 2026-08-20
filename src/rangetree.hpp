@@ -30,20 +30,20 @@ protected:
 	auto addTag(RangeTag tag, PieceTree &piece_tree)
 	{
 		auto piece_it = piece_tree.find(tag.anchor);
-		int32_t pos = tag.anchor.segPos() - static_cast<int32_t>(piece_it->seg_pos);
-		if (pos == piece_it->len)
+		int32_t offset = tag.anchor.segOffset() - static_cast<int32_t>(piece_it->seg_offset);
+		if (offset == piece_it->len)
 			++piece_it;
-		else if (pos > 0)
-			piece_it = piece_tree.split(piece_it, pos);
+		else if (offset > 0)
+			piece_it = piece_tree.split(piece_it, offset);
 
-		size_t history_pos = piece_it.position().total;
+		size_t history_offset = piece_it.position().total;
 
 		auto it = this->insert(std::move(tag),
-							   [&piece_tree, history_pos](const RangeTag &a, const RangeTag &b)
+							   [&piece_tree, history_offset](const RangeTag &a, const RangeTag &b)
 		{
-			size_t a_pos = piece_tree.historyPos(a.anchor);
-			if (a_pos != history_pos)
-				return a_pos < history_pos;
+			size_t a_offset = piece_tree.historyOffset(a.anchor);
+			if (a_offset != history_offset)
+				return a_offset < history_offset;
 			// new right tag-----  -----new left tag
 			// old right tag--- |  | ---old left tag
 			//  (prev piece]  | |  | |  [next piece)

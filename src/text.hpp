@@ -44,10 +44,10 @@ public:
 	// Iterator find(size_t row, size_t column);
 
 	// edit, return operation stamp
-	size_t insert(size_t pos, const String &text);
+	size_t insert(size_t offset, const String &text);
 	// size_t insert(size_t row, size_t column, const String &text);
 	size_t insert(const Anchor &anchor, const String &text);
-	size_t insertObject(size_t pos, const std::string &object_id);
+	size_t insertObject(size_t offset, const std::string &object_id);
 	size_t insertObject(const Anchor &anchor, const std::string &object_id);
 	size_t del(size_t begin, size_t end);
 	// size_t del(size_t row_begin, size_t column_begin, size_t row_end, size_t column_end);
@@ -56,10 +56,10 @@ public:
 	// index conversion
 	OpenedRange toOpenedRange(size_t begin, size_t end) const;
 	ClosedRange toClosedRange(size_t begin, size_t end) const;
-	Anchor toAnchor(size_t pos) const;
+	Anchor toAnchor(size_t offset) const;
 	// Anchor toAnchor(size_t row, size_t column) const;
-	// size_t toPos(size_t row, size_t column) const;
-	size_t toPos(const Anchor &anchor) const;
+	// size_t toOffset(size_t row, size_t column) const;
+	size_t toOffset(const Anchor &anchor) const;
 
 	// undo/redo, only undo/redo local user's operations
 	// the operation created WONT be recorded in undo/redo stack
@@ -122,9 +122,9 @@ public:
 	// Iterator find(const Anchor &anchor);
 
 	// edit, return operation stamp
-	size_t insert(size_t pos, const String &text);
+	size_t insert(size_t offset, const String &text);
 	size_t insert(const Anchor &anchor, const String &text);
-	size_t insertObject(size_t pos, const std::string &object_id);
+	size_t insertObject(size_t offset, const std::string &object_id);
 	size_t insertObject(const Anchor &anchor, const std::string &object_id);
 	size_t del(size_t begin, size_t end);
 	size_t del(const ClosedRange &range);
@@ -135,13 +135,13 @@ public:
 
 	// style
 	template <typename T>
-	T style(const std::string &style_name, size_t pos) const;
+	T style(const std::string &style_name, size_t offset) const;
 
 	// index conversion
 	OpenedRange toOpenedRange(size_t begin, size_t end) const;
 	ClosedRange toClosedRange(size_t begin, size_t end) const;
-	Anchor toAnchor(size_t pos) const;
-	size_t toPos(const Anchor &anchor) const;
+	Anchor toAnchor(size_t offset) const;
+	size_t toOffset(const Anchor &anchor) const;
 
 	// undo/redo, only undo/redo local user's operations
 	// the operation created WONT be recorded in undo/redo stack
@@ -208,17 +208,17 @@ typename RichText<FormatProvider, CharT>::String RichText<FormatProvider, CharT>
 template <typename FormatProvider, typename CharT>
 typename RichText<FormatProvider, CharT>::String RichText<FormatProvider, CharT>::slice(const Anchor &begin, const Anchor &end) const
 {
-	size_t b = toPos(begin);
-	size_t e = toPos(end);
+	size_t b = toOffset(begin);
+	size_t e = toOffset(end);
 	if (b > e)
 		return String();
 	return slice(b, e);
 }
 
 template <typename FormatProvider, typename CharT>
-size_t RichText<FormatProvider, CharT>::insert(size_t pos, const String &text)
+size_t RichText<FormatProvider, CharT>::insert(size_t offset, const String &text)
 {
-	Anchor anchor_val = doc.insertAnchor(pos);
+	Anchor anchor_val = doc.insertAnchor(offset);
 	return insert(anchor_val, text);
 }
 
@@ -233,9 +233,9 @@ size_t RichText<FormatProvider, CharT>::insert(const Anchor &anchor, const Strin
 }
 
 template <typename FormatProvider, typename CharT>
-size_t RichText<FormatProvider, CharT>::insertObject(size_t pos, const std::string &object_id)
+size_t RichText<FormatProvider, CharT>::insertObject(size_t offset, const std::string &object_id)
 {
-	Anchor anchor_val = doc.insertAnchor(pos);
+	Anchor anchor_val = doc.insertAnchor(offset);
 	return insertObject(anchor_val, object_id);
 }
 
@@ -296,9 +296,9 @@ size_t RichText<FormatProvider, CharT>::format(const std::string &style_name, Ra
 }
 template <typename FormatProvider, typename CharT>
 template <typename T>
-T RichText<FormatProvider, CharT>::style(const std::string &style_name, size_t pos) const
+T RichText<FormatProvider, CharT>::style(const std::string &style_name, size_t offset) const
 {
-	return doc.template style<T>(doc.find(pos), style_name);
+	return doc.template style<T>(doc.find(offset), style_name);
 }
 
 template <typename FormatProvider, typename CharT>
@@ -318,15 +318,15 @@ ClosedRange RichText<FormatProvider, CharT>::toClosedRange(size_t begin, size_t 
 }
 
 template <typename FormatProvider, typename CharT>
-Anchor RichText<FormatProvider, CharT>::toAnchor(size_t pos) const
+Anchor RichText<FormatProvider, CharT>::toAnchor(size_t offset) const
 {
-	return doc.insertAnchor(pos);
+	return doc.insertAnchor(offset);
 }
 
 template <typename FormatProvider, typename CharT>
-size_t RichText<FormatProvider, CharT>::toPos(const Anchor &anchor) const
+size_t RichText<FormatProvider, CharT>::toOffset(const Anchor &anchor) const
 {
-	return doc.pos(anchor);
+	return doc.offset(anchor);
 }
 
 template <typename FormatProvider, typename CharT>

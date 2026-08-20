@@ -6,7 +6,7 @@ export interface OperationID {
 export interface Anchor {
     replica: string;
     stamp: number;
-    pos: number;
+    offset: number;
 }
 
 export interface OpenedRange {
@@ -87,7 +87,7 @@ export class PlainText {
     delete(): void;
 }
 
-// All positions (index/offset) and Anchor.pos are UTF-16 code units, matching DOM
+// All positions (index/offset) and Anchor.offset are UTF-16 code units, matching DOM
 // Range/Selection offsets. Insertion.str is a UTF-16 JS string.
 export interface PiecesModule {
     PlainText: typeof PlainText;

@@ -30,17 +30,17 @@ typename PlainText<CharT>::String PlainText<CharT>::slice(size_t begin, size_t e
 template <typename CharT>
 typename PlainText<CharT>::String PlainText<CharT>::slice(const Anchor &begin, const Anchor &end) const
 {
-	size_t b = toPos(begin);
-	size_t e = toPos(end);
+	size_t b = toOffset(begin);
+	size_t e = toOffset(end);
 	if (b > e)
 		return String();
 	return slice(b, e);
 }
 
 template <typename CharT>
-size_t PlainText<CharT>::insert(size_t pos, const String &text)
+size_t PlainText<CharT>::insert(size_t offset, const String &text)
 {
-	Anchor anchor = doc.insertAnchor(pos);
+	Anchor anchor = doc.insertAnchor(offset);
 	return insert(anchor, text);
 }
 
@@ -55,9 +55,9 @@ size_t PlainText<CharT>::insert(const Anchor &anchor, const String &text)
 }
 
 template <typename CharT>
-size_t PlainText<CharT>::insertObject(size_t pos, const std::string &object_id)
+size_t PlainText<CharT>::insertObject(size_t offset, const std::string &object_id)
 {
-	Anchor anchor = doc.insertAnchor(pos);
+	Anchor anchor = doc.insertAnchor(offset);
 	return insertObject(anchor, object_id);
 }
 
@@ -104,15 +104,15 @@ ClosedRange PlainText<CharT>::toClosedRange(size_t begin, size_t end) const
 }
 
 template <typename CharT>
-Anchor PlainText<CharT>::toAnchor(size_t pos) const
+Anchor PlainText<CharT>::toAnchor(size_t offset) const
 {
-	return doc.insertAnchor(pos);
+	return doc.insertAnchor(offset);
 }
 
 template <typename CharT>
-size_t PlainText<CharT>::toPos(const Anchor &anchor) const
+size_t PlainText<CharT>::toOffset(const Anchor &anchor) const
 {
-	return doc.pos(anchor);
+	return doc.offset(anchor);
 }
 
 template <typename CharT>

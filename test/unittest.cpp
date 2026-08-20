@@ -72,7 +72,7 @@ TEST(PlainTextTest, InsertUndoOnEOF)
 
 	auto anchor = doc.toAnchor(3);
 	doc.apply(doc2.diff(doc.frontline()));
-	EXPECT_EQ(doc.toPos(anchor), 3);
+	EXPECT_EQ(doc.toOffset(anchor), 3);
 	EXPECT_EQ(doc.toString(), "aaabbb");
 
 	// only undo the last operation made by self

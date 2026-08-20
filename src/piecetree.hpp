@@ -37,7 +37,7 @@ struct Segment : public StoredContent
 		// TODO: ensure that str.size() <= INT32_MAX
 		data = std::make_unique<const CharT[]>(str.size() + 1);
 		memcpy(const_cast<CharT *>(data.get()), str.data(), (str.size() + 1) * sizeof(CharT));
-		len = static_cast<int32_t>(str.size());
+		size = static_cast<int32_t>(str.size());
 
 		// collect newline offsets in CharT offsets
 		if (!str.empty())
@@ -135,7 +135,7 @@ struct Piece
 	StoredContent *seg{nullptr};
 	const CharT *data{nullptr};
 	uint32_t len{0};
-	uint32_t seg_pos{0};
+	uint32_t seg_offset{0};
 	StoredRangeOp *tombStone{nullptr};
 	Formats styles;
 
@@ -143,8 +143,8 @@ struct Piece
 	Piece(StoredContent *seg)
 		: seg(seg),
 		  data(seg->isObject() ? objectPlaceholder<CharT>() : static_cast<Segment<CharT> *>(seg)->data.get()),
-		  len(static_cast<uint32_t>(seg->len)),
-		  seg_pos(0) {}
+		  len(static_cast<uint32_t>(seg->size)),
+		  seg_offset(0) {}
 
 	bool isRemoved() const
 	{
@@ -192,7 +192,7 @@ struct StoredObject : public StoredContent
 	StoredObject(std::string id)
 		: StoredContent(), id(std::move(id))
 	{
-		len = 1;
+		size = 1;
 	}
 
 	bool isObject() const override
@@ -225,20 +225,20 @@ inline Piece<CharT> *lastPiece(StoredContent *content)
 template <typename CharT>
 inline auto Segment<CharT>::pieceAt(int32_t offset) const
 {
-	if (offset == 0 || std::abs(offset) > len)
+	if (offset == 0 || std::abs(offset) > size)
 		return split_piece.end();
 	if (offset > 0)
 		return std::lower_bound(
 			split_piece.begin(), split_piece.end(), offset,
 			[](const Piece<CharT> *p, size_t position)
 		{
-			return p->seg_pos + p->len < position;
+			return p->seg_offset + p->len < position;
 		});
 	return std::lower_bound(
-		split_piece.begin(), split_piece.end(), len + offset,
+		split_piece.begin(), split_piece.end(), size + offset,
 		[](const Piece<CharT> *p, size_t position)
 	{
-		return p->seg_pos + p->len <= position;
+		return p->seg_offset + p->len <= position;
 	});
 }
 
@@ -249,7 +249,7 @@ inline auto Segment<CharT>::insertPiece(Piece<CharT> *piece)
 		split_piece.begin(), split_piece.end(), piece,
 		[](const Piece<CharT> *a, const Piece<CharT> *b)
 	{
-		return a->seg_pos < b->seg_pos;
+		return a->seg_offset < b->seg_offset;
 	});
 	return split_piece.insert(it, piece);
 }
@@ -270,27 +270,27 @@ public:
 		initial_segment->split_piece.push_back(&*it);
 	}
 
-	Iterator findHistory(size_t history_pos) const
+	Iterator findHistory(size_t history_offset) const
 	{
-		return Base::find(history_pos, [](size_t a, const PieceInfo &b)
+		return Base::find(history_offset, [](size_t a, const PieceInfo &b)
 		{
 			return a < b.total;
 		});
 	}
 
-	// Finds the first piece with end position > file_pos
-	Iterator upper_bound(size_t file_pos) const
+	// Finds the first piece with end position > file_offset
+	Iterator upper_bound(size_t file_offset) const
 	{
-		return Base::find(file_pos, [](size_t a, const PieceInfo &b)
+		return Base::find(file_offset, [](size_t a, const PieceInfo &b)
 		{
 			return a < b.visible;
 		});
 	}
 
-	// Finds the first piece with end position >= file_pos
-	Iterator lower_bound(size_t file_pos) const
+	// Finds the first piece with end position >= file_offset
+	Iterator lower_bound(size_t file_offset) const
 	{
-		return Base::find(file_pos, [](size_t a, const PieceInfo &b)
+		return Base::find(file_offset, [](size_t a, const PieceInfo &b)
 		{
 			return a <= b.visible;
 		});
@@ -309,7 +309,7 @@ public:
 		else
 		{
 			auto *text_seg = static_cast<Segment<CharT> *>(seg);
-			auto piece_it = text_seg->pieceAt(anchor.pos);
+			auto piece_it = text_seg->pieceAt(anchor.offset);
 			if (piece_it == text_seg->split_piece.end())
 				return this->end();
 			piece = *piece_it;
@@ -317,10 +317,10 @@ public:
 		return piece ? Iterator(piece) : this->end();
 	}
 
-	size_t historyPos(const StoredAnchor &anchor) const
+	size_t historyOffset(const StoredAnchor &anchor) const
 	{
 		Iterator it = find(anchor);
-		return it.position().total + (anchor.segPos() - it->seg_pos);
+		return it.position().total + (anchor.segOffset() - it->seg_offset);
 	}
 
 	Iterator insert(StoredContent *segment)
@@ -330,21 +330,21 @@ public:
 		assert(parent != nullptr);
 		auto piece_it = find(anchor);
 		assert(piece_it != this->end());
-		int32_t pos = static_cast<int32_t>(anchor.segPos() - piece_it->seg_pos);
+		int32_t offset = static_cast<int32_t>(anchor.segOffset() - piece_it->seg_offset);
 		auto conflict_it = parent->insertContent(segment);
 		Piece<CharT> new_node(segment);
 		// handle insertion ambiguity
-		if (pos == 0)
+		if (offset == 0)
 		{ // for reversed anchor
 			Piece<CharT> *piece = &*piece_it;
 			if (conflict_it + 1 != parent->child.end())
 			{
 				StoredContent *after = *(conflict_it + 1);
-				if (after->anchor.pos == anchor.pos) // has conflict
+				if (after->anchor.offset == anchor.offset) // has conflict
 				{
 					for (; !after->child.empty(); after = after->child[0])
 					{
-						if (after->child[0]->anchor.pos != 0)
+						if (after->child[0]->anchor.offset != 0)
 							break;
 					}
 					piece = firstPiece<CharT>(after);
@@ -352,17 +352,17 @@ public:
 			}
 			piece_it = this->insertBefore(Iterator(piece), new_node);
 		}
-		else if (pos == piece_it->len)
+		else if (offset == piece_it->len)
 		{ // for normal anchor
 			Piece<CharT> *piece = &*piece_it;
 			if (conflict_it != parent->child.begin())
 			{
 				StoredContent *before = *(conflict_it - 1);
-				if (before->anchor.pos == anchor.pos) // has conflict
+				if (before->anchor.offset == anchor.offset) // has conflict
 				{
 					for (; !before->child.empty(); before = before->child.back())
 					{
-						if (before->child.back()->anchor.pos != before->len)
+						if (before->child.back()->anchor.offset != before->size)
 							break;
 					}
 					piece = lastPiece<CharT>(before);
@@ -372,7 +372,7 @@ public:
 		}
 		else
 		{
-			piece_it = split(piece_it, pos);
+			piece_it = split(piece_it, offset);
 			piece_it = this->insertBefore(piece_it, new_node);
 		}
 		if (segment->isObject())
@@ -383,17 +383,17 @@ public:
 	}
 
 	// return the right part
-	Iterator split(Iterator it, int32_t pos)
+	Iterator split(Iterator it, int32_t offset)
 	{
-		assert(0 < pos && pos < it->len);
+		assert(0 < offset && offset < it->len);
 
-		// new node is the right part; CharT is fixed width so pos is both the
+		// new node is the right part; CharT is fixed width so offset is both the
 		// character and byte-unit offset within the piece
 		Piece<CharT> new_node = *it;
-		it->len = pos;
-		new_node.data += pos;
-		new_node.seg_pos += pos;
-		new_node.len -= pos;
+		it->len = offset;
+		new_node.data += offset;
+		new_node.seg_offset += offset;
+		new_node.len -= offset;
 		it.key() = it->size(); // no need to update(), insertBefore() will do it
 		this->update(it, it);
 
