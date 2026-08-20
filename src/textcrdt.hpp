@@ -8,7 +8,7 @@
 #include "rangetree.hpp"
 #include "taggedptr.hpp"
 
-template <typename FormatProvider = void>
+template <typename FormatProvider = void, typename CharT = char>
 class PieceCRDT
 {
 	struct Empty
@@ -23,18 +23,19 @@ private:
 
 protected:
 	OrderedSet<Replica, 4> replicas;
-	mutable PieceTree<4> piece_tree;
+	mutable PieceTree<4, CharT> piece_tree;
 	RangeTree<4> deletions;
 	Format format_provider;
 
 public:
-	using Iterator = typename PieceTree<4>::Iterator;
+	using Iterator = typename PieceTree<4, CharT>::Iterator;
+	using String = std::basic_string<CharT>;
 
 	PieceCRDT(const ReplicaID &origin = {})
 		: lamport_stamp(0),
 		  local_id(generateReplicaID()),
 		  origin_id(origin.is_nil() ? local_id : origin),
-		  piece_tree(storeOp<Segment>(ReplicaID(), 1, std::string(1, 0))) // EOF
+		  piece_tree(storeOp<Segment<CharT>>(ReplicaID(), 1, String(1, CharT(0)))) // EOF
 	{
 	}
 	PieceCRDT(const PieceCRDT &) = delete;
@@ -87,9 +88,9 @@ public:
 		return (--piece_tree.end()).position().visible;
 	}
 
-	std::string toString() const
+	String toString() const
 	{
-		std::string res;
+		String res;
 		res.reserve(size());
 		for (auto it = piece_tree.begin(), end_it = --piece_tree.end(); it != end_it; ++it)
 		{
@@ -168,7 +169,7 @@ public:
 	{
 		StoredAnchor stored = toStored(anchor);
 		if (stored.seg == nullptr)
-			return std::string::npos;
+			return String::npos;
 		auto it = piece_tree.find(stored);
 		if (it->isRemoved())
 			return it.position().visible;
@@ -217,9 +218,12 @@ public:
 					const auto *parent = content->anchor.seg;
 					Anchor anchor(parent->operationID(), content->anchor.pos);
 					if (content->isObject())
-						res.push_back(std::make_unique<Insertion>(replica.id, i, anchor, std::string(), static_cast<const StoredObject *>(content)->id));
+						res.push_back(std::make_unique<Insertion<CharT>>(replica.id, i, anchor, String(), static_cast<const StoredObject<CharT> *>(content)->id));
 					else
-						res.push_back(std::make_unique<Insertion>(replica.id, i, anchor, std::string(content->rawData())));
+					{
+						const auto *text_seg = static_cast<const Segment<CharT> *>(content);
+						res.push_back(std::make_unique<Insertion<CharT>>(replica.id, i, anchor, String(text_seg->data.get())));
+					}
 					break;
 				}
 				case OperationType::Delete:
@@ -263,7 +267,7 @@ public:
 		switch (op.type)
 		{
 		case OperationType::Insert:
-			return insert(static_cast<const Insertion &>(op));
+			return insert(static_cast<const Insertion<CharT> &>(op));
 		case OperationType::Delete:
 			return del(static_cast<const Deletion &>(op));
 		case OperationType::Undo:
@@ -281,7 +285,7 @@ public:
 		}
 	}
 
-	bool insert(const Insertion &op)
+	bool insert(const Insertion<CharT> &op)
 	{
 		if (op.str.empty() && op.object_id.empty())
 			return false; // no-op
@@ -290,8 +294,8 @@ public:
 			return false; // invalid anchor
 
 		StoredContent *segment = op.object_id.empty()
-									 ? static_cast<StoredContent *>(storeOp<Segment>(op.replica, op.stamp, op.str))
-									 : static_cast<StoredContent *>(storeOp<StoredObject>(op.replica, op.stamp, op.object_id));
+									 ? static_cast<StoredContent *>(storeOp<Segment<CharT>>(op.replica, op.stamp, op.str))
+									 : static_cast<StoredContent *>(storeOp<StoredObject<CharT>>(op.replica, op.stamp, op.object_id));
 		if (segment == nullptr)
 			return false; // duplicate operation
 
@@ -524,7 +528,7 @@ private:
 			}
 		}
 
-		redoRangeOp(target, [](Piece *piece, StoredRangeOp *op)
+		redoRangeOp(target, [](Piece<CharT> *piece, StoredRangeOp *op)
 		{
 			if (piece->tombStone == nullptr || *piece->tombStone < *op)
 				piece->tombStone = static_cast<StoredRangeOp *>(op);
@@ -534,7 +538,7 @@ private:
 
 	void undoDel(StoredDeletion *target)
 	{
-		auto ops_covered = undoRangeOp(target, [target](Piece *piece, StoredRangeOp *newest)
+		auto ops_covered = undoRangeOp(target, [target](Piece<CharT> *piece, StoredRangeOp *newest)
 		{
 			if (piece->tombStone == target)
 				piece->tombStone = static_cast<StoredRangeOp *>(newest);
@@ -543,7 +547,7 @@ private:
 		// the `old` tag is already updated in `undoRangeOp`, so directly call `redoRangeOp`
 		for (auto ops : ops_covered)
 		{
-			redoRangeOp(ops, [](Piece *piece, StoredRangeOp *op)
+			redoRangeOp(ops, [](Piece<CharT> *piece, StoredRangeOp *op)
 			{
 				if (piece->tombStone == nullptr || *piece->tombStone < *op)
 					piece->tombStone = static_cast<StoredRangeOp *>(op);
@@ -603,8 +607,8 @@ private:
 			}
 		}
 
-		std::multimap<void *, Piece *> cache;
-		redoRangeOp(target, [style_key, &cache](Piece *piece, StoredRangeOp *op)
+		std::multimap<void *, Piece<CharT> *> cache;
+		redoRangeOp(target, [style_key, &cache](Piece<CharT> *piece, StoredRangeOp *op)
 		{
 			if (piece->styles[style_key] == nullptr || *piece->styles[style_key] < *op)
 				cache.insert({piece->styles.raw(), piece});
@@ -612,7 +616,7 @@ private:
 		for (auto it = cache.begin(); it != cache.end();)
 		{
 			auto range = cache.equal_range(it->first);
-			Piece *first_piece = range.first->second;
+			Piece<CharT> *first_piece = range.first->second;
 			Formats new_formats = first_piece->styles;
 			new_formats.set(style_key, target);
 			for (auto jt = range.first; jt != range.second; ++jt)
@@ -628,8 +632,8 @@ private:
 	{
 		int style_key = target->styleType();
 
-		std::multimap<std::pair<void *, StoredRangeOp *>, Piece *> cache;
-		auto ops_covered = undoRangeOp(target, [target, style_key, &cache](Piece *piece, StoredRangeOp *newest)
+		std::multimap<std::pair<void *, StoredRangeOp *>, Piece<CharT> *> cache;
+		auto ops_covered = undoRangeOp(target, [target, style_key, &cache](Piece<CharT> *piece, StoredRangeOp *newest)
 		{
 			if (piece->styles[style_key] == target)
 				cache.insert({{piece->styles.raw(), newest}, piece});
@@ -638,12 +642,12 @@ private:
 		{
 			auto range = cache.equal_range(it->first);
 			StoredRangeOp *newest_op = it->first.second;
-			Piece *first_piece = range.first->second;
+			Piece<CharT> *first_piece = range.first->second;
 			Formats new_formats = first_piece->styles;
 			new_formats.set(style_key, newest_op);
 			for (auto jt = range.first; jt != range.second; ++jt)
 			{
-				Piece *piece = jt->second;
+				Piece<CharT> *piece = jt->second;
 				piece->styles = new_formats;
 			}
 			it = range.second;
@@ -651,8 +655,8 @@ private:
 
 		for (auto op : ops_covered)
 		{
-			std::multimap<void *, Piece *> cache;
-			redoRangeOp(op, [style_key, &cache](Piece *piece, StoredRangeOp *op)
+			std::multimap<void *, Piece<CharT> *> cache;
+			redoRangeOp(op, [style_key, &cache](Piece<CharT> *piece, StoredRangeOp *op)
 			{
 				if (piece->styles[style_key] == nullptr || *piece->styles[style_key] < *op)
 					cache.insert({piece->styles.raw(), piece});
@@ -660,7 +664,7 @@ private:
 			for (auto it = cache.begin(); it != cache.end();)
 			{
 				auto range = cache.equal_range(it->first);
-				Piece *first_piece = range.first->second;
+				Piece<CharT> *first_piece = range.first->second;
 				Formats new_formats = first_piece->styles;
 				new_formats.set(style_key, op);
 				for (auto jt = range.first; jt != range.second; ++jt)

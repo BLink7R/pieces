@@ -9,7 +9,7 @@ namespace
 {
 
 // Helper for Apply
-void applyHelper(PlainText &self, const val &opVal)
+void applyHelper(PlainText<char16_t> &self, const val &opVal)
 {
 	if (opVal.isNull() || opVal.isUndefined())
 		return;
@@ -28,7 +28,7 @@ void applyHelper(PlainText &self, const val &opVal)
 	switch (type)
 	{
 	case OperationType::Insert:
-		self.apply(opVal.as<Insertion>()); // Auto-conversion from JS object to Insertion struct
+		self.apply(opVal.as<Insertion<char16_t>>()); // Auto-conversion from JS object to Insertion<char16_t> struct
 		break;
 	case OperationType::Delete:
 		self.apply(opVal.as<Deletion>());
@@ -44,7 +44,7 @@ void applyHelper(PlainText &self, const val &opVal)
 	}
 }
 
-val diffHelper(PlainText &self, const val &frontlineVal)
+val diffHelper(PlainText<char16_t> &self, const val &frontlineVal)
 {
 	std::vector<OperationID> frontline;
 	if (frontlineVal.isArray())
@@ -73,7 +73,7 @@ val diffHelper(PlainText &self, const val &frontlineVal)
 		switch (op->type)
 		{
 		case OperationType::Insert:
-			result.call<void>("push", *static_cast<Insertion *>(op.get()));
+			result.call<void>("push", *static_cast<Insertion<char16_t> *>(op.get()));
 			break;
 		case OperationType::Delete:
 			result.call<void>("push", *static_cast<Deletion *>(op.get()));
@@ -93,7 +93,7 @@ val diffHelper(PlainText &self, const val &frontlineVal)
 	return result;
 }
 
-val frontlineHelper(PlainText &self)
+val frontlineHelper(PlainText<char16_t> &self)
 {
 	auto frontline = self.frontline();
 	val result = val::array();
@@ -104,9 +104,9 @@ val frontlineHelper(PlainText &self)
 	return result;
 }
 
-std::string replicaIDHelper(const PlainText &self) { return uuids::to_string(self.replicaID()); }
+std::string replicaIDHelper(const PlainText<char16_t> &self) { return uuids::to_string(self.replicaID()); }
 
-std::string originHelper(const PlainText &self) { return uuids::to_string(self.origin()); }
+std::string originHelper(const PlainText<char16_t> &self) { return uuids::to_string(self.origin()); }
 
 std::string getOpIDReplica(const OperationID &o) { return uuids::to_string(o.replica); }
 void setOpIDReplica(OperationID &o, const std::string &s)
@@ -159,15 +159,15 @@ EMSCRIPTEN_BINDINGS(my_module)
 
 	// Note: value_object cannot inherit from other value_objects.
 	// We must flatten the fields from the base Operation class into each derived struct's value_object definition.
-	value_object<Insertion>("Insertion")
+	value_object<Insertion<char16_t>>("Insertion")
 		// Base Operation fields
 		.field("replica", &getOpReplica, &setOpReplica)
 		.field("stamp", &Operation::stamp)
 		.field("type", &Operation::type)
-		// Insertion specific fields
-		.field("anchor", &Insertion::anchor)
-		.field("str", &Insertion::str)
-		.field("object_id", &Insertion::object_id);
+		// Insertion<char16_t> specific fields
+		.field("anchor", &Insertion<char16_t>::anchor)
+		.field("str", &Insertion<char16_t>::str)
+		.field("object_id", &Insertion<char16_t>::object_id);
 
 	value_object<Deletion>("Deletion")
 		// Base Operation fields
@@ -195,27 +195,27 @@ EMSCRIPTEN_BINDINGS(my_module)
 
 	register_vector<OperationID>("VectorOperationID");
 
-	class_<PlainText>("PlainText")
+	class_<PlainText<char16_t>>("PlainText")
 		.constructor<>()
-		.function("size", &PlainText::size)
-		.function("empty", &PlainText::empty)
-		.function("toString", &PlainText::toString)
-		.function("slice", select_overload<std::string(size_t, size_t) const>(&PlainText::slice))
-		.function("insert", select_overload<size_t(size_t, const std::string &)>(&PlainText::insert))
-		.function("insertAnchor", select_overload<size_t(const Anchor &, const std::string &)>(&PlainText::insert))
-		.function("insertObject", select_overload<size_t(size_t, const std::string &)>(&PlainText::insertObject))
-		.function("insertObjectAnchor", select_overload<size_t(const Anchor &, const std::string &)>(&PlainText::insertObject))
-		.function("del", select_overload<size_t(size_t, size_t)>(&PlainText::del))
-		.function("delAnchor", select_overload<size_t(const ClosedRange &)>(&PlainText::del))
-		.function("toRange", &PlainText::toClosedRange)
-		.function("toAnchor", &PlainText::toAnchor)
-		.function("toOffset", &PlainText::toPos)
-		.function("undo", &PlainText::undo)
-		.function("redo", &PlainText::redo)
-		.function("canUndo", &PlainText::canUndo)
-		.function("canRedo", &PlainText::canRedo)
-		.function("undoSpecific", &PlainText::undoSpecific)
-		.function("redoSpecific", &PlainText::redoSpecific)
+		.function("size", &PlainText<char16_t>::size)
+		.function("empty", &PlainText<char16_t>::empty)
+		.function("toString", &PlainText<char16_t>::toString)
+		.function("slice", select_overload<std::u16string(size_t, size_t) const>(&PlainText<char16_t>::slice))
+		.function("insert", select_overload<size_t(size_t, const std::u16string &)>(&PlainText<char16_t>::insert))
+		.function("insertAnchor", select_overload<size_t(const Anchor &, const std::u16string &)>(&PlainText<char16_t>::insert))
+		.function("insertObject", select_overload<size_t(size_t, const std::string &)>(&PlainText<char16_t>::insertObject))
+		.function("insertObjectAnchor", select_overload<size_t(const Anchor &, const std::string &)>(&PlainText<char16_t>::insertObject))
+		.function("del", select_overload<size_t(size_t, size_t)>(&PlainText<char16_t>::del))
+		.function("delAnchor", select_overload<size_t(const ClosedRange &)>(&PlainText<char16_t>::del))
+		.function("toRange", &PlainText<char16_t>::toClosedRange)
+		.function("toAnchor", &PlainText<char16_t>::toAnchor)
+		.function("toOffset", &PlainText<char16_t>::toPos)
+		.function("undo", &PlainText<char16_t>::undo)
+		.function("redo", &PlainText<char16_t>::redo)
+		.function("canUndo", &PlainText<char16_t>::canUndo)
+		.function("canRedo", &PlainText<char16_t>::canRedo)
+		.function("undoSpecific", &PlainText<char16_t>::undoSpecific)
+		.function("redoSpecific", &PlainText<char16_t>::redoSpecific)
 		.function("replicaID", &replicaIDHelper)
 		.function("origin", &originHelper)
 		.function("apply", &applyHelper)

@@ -5,7 +5,7 @@
 
 TEST(PlainTextTest, InsertAndToString)
 {
-	PlainText text;
+	PlainText<> text;
 	text.insert(0, "hello");
 	text.insert(5, " world");
 	EXPECT_EQ(text.toString(), "hello world");
@@ -13,7 +13,7 @@ TEST(PlainTextTest, InsertAndToString)
 
 TEST(PlainTextTest, DeleteRange)
 {
-	PlainText text;
+	PlainText<> text;
 	text.insert(0, "abcdef");
 	// delete "cd"
 	text.del(2, 4);
@@ -22,9 +22,9 @@ TEST(PlainTextTest, DeleteRange)
 
 TEST(PlainTextTest, UndoRedoInsertion)
 {
-	PlainText text;
+	PlainText<> text;
 	text.insert(0, "12345");
-	PlainText text2(text.replicaID());
+	PlainText<> text2(text.replicaID());
 	text2.apply(text.diff());
 
 	text2.del(0, 5);
@@ -45,14 +45,14 @@ TEST(PlainTextTest, UndoRedoInsertion)
 
 TEST(PlainTextTest, InsertOnEOF)
 {
-	PlainText text;
+	PlainText<> text;
 	text.insert(0, "aaa");
 	text.insert(0, "bbb");
 	Anchor anchor = text.toAnchor(3);
 	text.undo();
 	text.undo();
 
-	text.apply(Insertion{generateReplicaID(), 10, anchor, "ccc"});
+	text.apply(Insertion<char>{generateReplicaID(), 10, anchor, "ccc"});
 	EXPECT_EQ(text.toString(), "ccc");
 
 	text.redo();
@@ -61,12 +61,12 @@ TEST(PlainTextTest, InsertOnEOF)
 
 TEST(PlainTextTest, InsertUndoOnEOF)
 {
-	PlainText doc;
+	PlainText<> doc;
 	doc.insert(0, "12345678901234567890");
 	doc.del(0, 20);
 	doc.insert(0, "aaa");
 
-	PlainText doc2(doc.origin());
+	PlainText<> doc2(doc.origin());
 	doc2.apply(doc.diff(doc2.frontline()));
 	doc2.insert(3, "bbb");
 
@@ -171,7 +171,7 @@ TEST(RichTextTest, CoveredOp)
 TEST(PlainTextTest, InlineObject)
 {
 	const std::string obj_marker = "\xFF";
-	PlainText text;
+	PlainText<> text;
 	text.insert(0, "hello");
 	text.insertObject(5, "obj1");
 	text.insert(6, " world");
@@ -192,11 +192,11 @@ TEST(PlainTextTest, InlineObject)
 TEST(PlainTextTest, InlineObjectSync)
 {
 	const std::string obj_marker = "\xFF";
-	PlainText a;
+	PlainText<> a;
 	a.insert(0, "hello");
 	a.insertObject(5, "img1");
 
-	PlainText b(a.origin());
+	PlainText<> b(a.origin());
 	b.apply(a.diff(b.frontline()));
 	EXPECT_EQ(b.toString(), "hello" + obj_marker);
 
@@ -212,4 +212,37 @@ TEST(PlainTextTest, InlineObjectSync)
 	EXPECT_EQ(b.toString(), "helloX");
 	a.apply(b.diff(a.frontline()));
 	EXPECT_EQ(a.toString(), "helloX");
+}
+
+TEST(PlainTextTest, Utf16)
+{
+	PlainText<char16_t> text;
+	text.insert(0, u"hello");
+	text.insert(5, u" world");
+	EXPECT_EQ(text.toString(), u"hello world");
+	EXPECT_EQ(text.size(), 11);
+
+	// emoji is one code point but two char16 code units
+	text.insert(0, u"\U0001F600");
+	EXPECT_EQ(text.size(), 13);
+	EXPECT_EQ(text.toString(), std::u16string(u"\U0001F600") + u"hello world");
+
+	// delete the surrogate pair
+	text.del(0, 2);
+	EXPECT_EQ(text.toString(), u"hello world");
+}
+
+TEST(PlainTextTest, Utf16Sync)
+{
+	PlainText<char16_t> a;
+	a.insert(0, u"hello");
+
+	PlainText<char16_t> b(a.origin());
+	b.apply(a.diff(b.frontline()));
+	EXPECT_EQ(b.toString(), u"hello");
+
+	b.insert(5, u"\U0001F600");
+	a.apply(b.diff(a.frontline()));
+	EXPECT_EQ(a.toString(), std::u16string(u"hello") + u"\U0001F600");
+	EXPECT_EQ(b.toString(), std::u16string(u"hello") + u"\U0001F600");
 }

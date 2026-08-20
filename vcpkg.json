@@ -1,7 +1,6 @@
 {
   "dependencies": [
     "stduuid",
-    "utfcpp",
     "gtest"
   ]
 }

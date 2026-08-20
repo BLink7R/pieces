@@ -6,67 +6,79 @@ namespace {
 	constexpr uint32_t kGroupEnd = std::numeric_limits<uint32_t>::max() - 1;
 }
 
-size_t PlainText::size() const { return doc.size(); }
+template <typename CharT>
+size_t PlainText<CharT>::size() const { return doc.size(); }
 
-bool PlainText::empty() const { return doc.size() == 0; }
+template <typename CharT>
+bool PlainText<CharT>::empty() const { return doc.size() == 0; }
 
-std::string PlainText::toString() const { return doc.toString(); }
+template <typename CharT>
+typename PlainText<CharT>::String PlainText<CharT>::toString() const { return doc.toString(); }
 
-std::string PlainText::slice(size_t begin, size_t end) const
+template <typename CharT>
+typename PlainText<CharT>::String PlainText<CharT>::slice(size_t begin, size_t end) const
 {
-	std::string s = doc.toString();
+	using String = typename PlainText<CharT>::String;
+	String s = doc.toString();
 	if (begin >= s.size())
-		return "";
+		return String();
 	if (end > s.size())
 		end = s.size();
 	return s.substr(begin, end - begin);
 }
 
-std::string PlainText::slice(const Anchor &begin, const Anchor &end) const
+template <typename CharT>
+typename PlainText<CharT>::String PlainText<CharT>::slice(const Anchor &begin, const Anchor &end) const
 {
 	size_t b = toPos(begin);
 	size_t e = toPos(end);
 	if (b > e)
-		return "";
+		return String();
 	return slice(b, e);
 }
 
-size_t PlainText::insert(size_t pos, const std::string &text)
+template <typename CharT>
+size_t PlainText<CharT>::insert(size_t pos, const String &text)
 {
 	Anchor anchor = doc.insertAnchor(pos);
 	return insert(anchor, text);
 }
 
-size_t PlainText::insert(const Anchor &anchor, const std::string &text)
+template <typename CharT>
+size_t PlainText<CharT>::insert(const Anchor &anchor, const String &text)
 {
-	Insertion op(doc.id(), doc.stamp(), anchor, text);
+	Insertion<CharT> op(doc.id(), doc.stamp(), anchor, text);
 	if (!doc.insert(op))
 		return 0;
 	undo_stack.push(op.stamp);
 	return op.stamp;
 }
 
-size_t PlainText::insertObject(size_t pos, const std::string &object_id)
+template <typename CharT>
+size_t PlainText<CharT>::insertObject(size_t pos, const std::string &object_id)
 {
 	Anchor anchor = doc.insertAnchor(pos);
 	return insertObject(anchor, object_id);
 }
 
-size_t PlainText::insertObject(const Anchor &anchor, const std::string &object_id)
+template <typename CharT>
+size_t PlainText<CharT>::insertObject(const Anchor &anchor, const std::string &object_id)
 {
-	Insertion op(doc.id(), doc.stamp(), anchor, "", object_id);
+	Insertion<CharT> op(doc.id(), doc.stamp(), anchor, String(), object_id);
 	if (!doc.insert(op))
 		return 0;
 	undo_stack.push(op.stamp);
 	return op.stamp;
 }
 
-size_t PlainText::del(size_t begin, size_t end)
+template <typename CharT>
+size_t PlainText<CharT>::del(size_t begin, size_t end)
 {
 	return del(toClosedRange(begin, end));
 }
 
-size_t PlainText::del(const ClosedRange &range)
+template <typename CharT>
+size_t PlainText<CharT>::del(const ClosedRange &range)
 {
 	Deletion op(doc.id(), doc.stamp(), range.begin, range.end);
 	if (!doc.del(op))
@@ -75,45 +87,54 @@ size_t PlainText::del(const ClosedRange &range)
 	return op.stamp;
 }
 
-OpenedRange PlainText::toOpenedRange(size_t begin, size_t end) const
+template <typename CharT>
+OpenedRange PlainText<CharT>::toOpenedRange(size_t begin, size_t end) const
 {
 	Anchor anchorBegin = doc.reversedAnchor(begin);
 	Anchor anchorEnd = doc.reversedAnchor(end);
 	return OpenedRange(anchorBegin, anchorEnd);
 }
 
-ClosedRange PlainText::toClosedRange(size_t begin, size_t end) const
+template <typename CharT>
+ClosedRange PlainText<CharT>::toClosedRange(size_t begin, size_t end) const
 {
 	Anchor anchorBegin = doc.reversedAnchor(begin);
 	Anchor anchorEnd = doc.anchor(end);
 	return ClosedRange(anchorBegin, anchorEnd);
 }
 
-Anchor PlainText::toAnchor(size_t pos) const
+template <typename CharT>
+Anchor PlainText<CharT>::toAnchor(size_t pos) const
 {
 	return doc.insertAnchor(pos);
 }
 
-size_t PlainText::toPos(const Anchor &anchor) const
+template <typename CharT>
+size_t PlainText<CharT>::toPos(const Anchor &anchor) const
 {
 	return doc.pos(anchor);
 }
 
-void PlainText::beginGroup()
+template <typename CharT>
+void PlainText<CharT>::beginGroup()
 {
 	undo_stack.push(kGroupStart);
 }
 
-void PlainText::endGroup()
+template <typename CharT>
+void PlainText<CharT>::endGroup()
 {
 	undo_stack.push(kGroupEnd);
 }
 
-bool PlainText::canUndo() const { return !undo_stack.empty(); }
+template <typename CharT>
+bool PlainText<CharT>::canUndo() const { return !undo_stack.empty(); }
 
-bool PlainText::canRedo() const { return !redo_stack.empty(); }
+template <typename CharT>
+bool PlainText<CharT>::canRedo() const { return !redo_stack.empty(); }
 
-void PlainText::undo()
+template <typename CharT>
+void PlainText<CharT>::undo()
 {
 	if (undo_stack.empty())
 		return;
@@ -162,7 +183,8 @@ void PlainText::undo()
 	}
 }
 
-void PlainText::redo()
+template <typename CharT>
+void PlainText<CharT>::redo()
 {
 	if (redo_stack.empty())
 		return;
@@ -209,7 +231,8 @@ void PlainText::redo()
 	}
 }
 
-size_t PlainText::undoSpecific(OperationID opID)
+template <typename CharT>
+size_t PlainText<CharT>::undoSpecific(OperationID opID)
 {
 	UndoOperation op(doc.id(), doc.stamp(), opID);
 	if (!doc.undo(op))
@@ -218,7 +241,8 @@ size_t PlainText::undoSpecific(OperationID opID)
 	return op.stamp;
 }
 
-size_t PlainText::redoSpecific(OperationID opID)
+template <typename CharT>
+size_t PlainText<CharT>::redoSpecific(OperationID opID)
 {
 	RedoOperation op(doc.id(), doc.stamp(), opID);
 	if (!doc.redo(op))
@@ -227,26 +251,35 @@ size_t PlainText::redoSpecific(OperationID opID)
 	return op.stamp;
 }
 
-ReplicaID PlainText::replicaID() const { return doc.id(); }
+template <typename CharT>
+ReplicaID PlainText<CharT>::replicaID() const { return doc.id(); }
 
-ReplicaID PlainText::origin() const { return doc.origin(); }
+template <typename CharT>
+ReplicaID PlainText<CharT>::origin() const { return doc.origin(); }
 
-bool PlainText::apply(const Operation &op)
+template <typename CharT>
+bool PlainText<CharT>::apply(const Operation &op)
 {
 	return doc.apply(op);
 }
 
-void PlainText::apply(const std::vector<std::unique_ptr<Operation>> &ops)
+template <typename CharT>
+void PlainText<CharT>::apply(const std::vector<std::unique_ptr<Operation>> &ops)
 {
 	doc.apply(ops);
 }
 
-std::vector<OperationID> PlainText::frontline()
+template <typename CharT>
+std::vector<OperationID> PlainText<CharT>::frontline()
 {
 	return doc.frontline();
 }
 
-std::vector<std::unique_ptr<Operation>> PlainText::diff(const std::vector<OperationID> &frontline)
+template <typename CharT>
+std::vector<std::unique_ptr<Operation>> PlainText<CharT>::diff(const std::vector<OperationID> &frontline)
 {
 	return doc.diff(frontline);
 }
+
+template class PlainText<char>;
+template class PlainText<char16_t>;

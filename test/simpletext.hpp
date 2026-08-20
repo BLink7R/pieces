@@ -270,7 +270,7 @@ public:
 	}
 };
 
-class PieceCRDTValidator : public PieceCRDT<void>
+class PieceCRDTValidator : public PieceCRDT<void, char>
 {
 public:
 	// closed range for history index

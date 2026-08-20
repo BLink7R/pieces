@@ -10,15 +10,17 @@
 #include "textcrdt.hpp"
 
 // TODO: check index is valid
+template <typename CharT = char>
 class PlainText
 {
 private:
-	PieceCRDT<void> doc;
+	PieceCRDT<void, CharT> doc;
 	std::stack<uint32_t> undo_stack;
 	std::stack<uint32_t> redo_stack;
 
 public:
-	using Iterator = PieceCRDT<void>::Iterator;
+	using Iterator = PieceCRDT<void, CharT>::Iterator;
+	using String = std::basic_string<CharT>;
 
 	PlainText() = default;
 	PlainText(const ReplicaID &rid)
@@ -30,9 +32,9 @@ public:
 	bool empty() const;
 
 	// export
-	std::string toString() const;
-	std::string slice(size_t begin, size_t end) const;
-	std::string slice(const Anchor &begin, const Anchor &end) const;
+	String toString() const;
+	String slice(size_t begin, size_t end) const;
+	String slice(const Anchor &begin, const Anchor &end) const;
 
 	// iterate
 	// Iterator begin();
@@ -42,9 +44,9 @@ public:
 	// Iterator find(size_t row, size_t column);
 
 	// edit, return operation stamp
-	size_t insert(size_t pos, const std::string &text);
-	// size_t insert(size_t row, size_t column, const std::string &text);
-	size_t insert(const Anchor &anchor, const std::string &text);
+	size_t insert(size_t pos, const String &text);
+	// size_t insert(size_t row, size_t column, const String &text);
+	size_t insert(const Anchor &anchor, const String &text);
 	size_t insertObject(size_t pos, const std::string &object_id);
 	size_t insertObject(const Anchor &anchor, const std::string &object_id);
 	size_t del(size_t begin, size_t end);
@@ -84,11 +86,11 @@ public:
 	std::vector<std::unique_ptr<Operation>> diff(const std::vector<OperationID> &frontline = {}); // return operations ahead of the given frontline
 };
 
-template <typename FormatProvider>
+template <typename FormatProvider, typename CharT = char>
 class RichText
 {
 private:
-	PieceCRDT<FormatProvider> doc;
+	PieceCRDT<FormatProvider, CharT> doc;
 	std::stack<uint32_t> undo_stack;
 	std::stack<uint32_t> redo_stack;
 
@@ -96,7 +98,8 @@ private:
 	static constexpr uint32_t kGroupEnd = std::numeric_limits<uint32_t>::max() - 1;
 
 public:
-	using Iterator = PieceCRDT<FormatProvider>::Iterator;
+	using Iterator = PieceCRDT<FormatProvider, CharT>::Iterator;
+	using String = std::basic_string<CharT>;
 
 	RichText() = default;
 	RichText(const ReplicaID &rid)
@@ -108,9 +111,9 @@ public:
 	FormatProvider &formatProvider();
 
 	// export
-	std::string toString() const;
-	std::string slice(size_t begin, size_t end) const;
-	std::string slice(const Anchor &begin, const Anchor &end) const;
+	String toString() const;
+	String slice(size_t begin, size_t end) const;
+	String slice(const Anchor &begin, const Anchor &end) const;
 
 	// iterate
 	// Iterator begin();
@@ -119,8 +122,8 @@ public:
 	// Iterator find(const Anchor &anchor);
 
 	// edit, return operation stamp
-	size_t insert(size_t pos, const std::string &text);
-	size_t insert(const Anchor &anchor, const std::string &text);
+	size_t insert(size_t pos, const String &text);
+	size_t insert(const Anchor &anchor, const String &text);
 	size_t insertObject(size_t pos, const std::string &object_id);
 	size_t insertObject(const Anchor &anchor, const std::string &object_id);
 	size_t del(size_t begin, size_t end);
@@ -167,93 +170,93 @@ public:
 
 // ===== RichText implementation =====
 
-template <typename FormatProvider>
-size_t RichText<FormatProvider>::size() const
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::size() const
 {
 	return doc.size();
 }
 
-template <typename FormatProvider>
-bool RichText<FormatProvider>::empty() const
+template <typename FormatProvider, typename CharT>
+bool RichText<FormatProvider, CharT>::empty() const
 {
 	return doc.size() == 0;
 }
 
-template <typename FormatProvider>
-FormatProvider &RichText<FormatProvider>::formatProvider()
+template <typename FormatProvider, typename CharT>
+FormatProvider &RichText<FormatProvider, CharT>::formatProvider()
 {
 	return doc.formatProvider();
 }
 
-template <typename FormatProvider>
-std::string RichText<FormatProvider>::toString() const
+template <typename FormatProvider, typename CharT>
+typename RichText<FormatProvider, CharT>::String RichText<FormatProvider, CharT>::toString() const
 {
 	return doc.toString();
 }
 
-template <typename FormatProvider>
-std::string RichText<FormatProvider>::slice(size_t begin, size_t end) const
+template <typename FormatProvider, typename CharT>
+typename RichText<FormatProvider, CharT>::String RichText<FormatProvider, CharT>::slice(size_t begin, size_t end) const
 {
-	std::string s = doc.toString();
+	String s = doc.toString();
 	if (begin >= s.size())
-		return "";
+		return String();
 	if (end > s.size())
 		end = s.size();
 	return s.substr(begin, end - begin);
 }
 
-template <typename FormatProvider>
-std::string RichText<FormatProvider>::slice(const Anchor &begin, const Anchor &end) const
+template <typename FormatProvider, typename CharT>
+typename RichText<FormatProvider, CharT>::String RichText<FormatProvider, CharT>::slice(const Anchor &begin, const Anchor &end) const
 {
 	size_t b = toPos(begin);
 	size_t e = toPos(end);
 	if (b > e)
-		return "";
+		return String();
 	return slice(b, e);
 }
 
-template <typename FormatProvider>
-size_t RichText<FormatProvider>::insert(size_t pos, const std::string &text)
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::insert(size_t pos, const String &text)
 {
 	Anchor anchor_val = doc.insertAnchor(pos);
 	return insert(anchor_val, text);
 }
 
-template <typename FormatProvider>
-size_t RichText<FormatProvider>::insert(const Anchor &anchor, const std::string &text)
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::insert(const Anchor &anchor, const String &text)
 {
-	Insertion op(doc.id(), doc.stamp(), anchor, text);
+	Insertion<CharT> op(doc.id(), doc.stamp(), anchor, text);
 	if (!doc.insert(op))
 		return 0;
 	undo_stack.push(op.stamp);
 	return op.stamp;
 }
 
-template <typename FormatProvider>
-size_t RichText<FormatProvider>::insertObject(size_t pos, const std::string &object_id)
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::insertObject(size_t pos, const std::string &object_id)
 {
 	Anchor anchor_val = doc.insertAnchor(pos);
 	return insertObject(anchor_val, object_id);
 }
 
-template <typename FormatProvider>
-size_t RichText<FormatProvider>::insertObject(const Anchor &anchor, const std::string &object_id)
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::insertObject(const Anchor &anchor, const std::string &object_id)
 {
-	Insertion op(doc.id(), doc.stamp(), anchor, "", object_id);
+	Insertion<CharT> op(doc.id(), doc.stamp(), anchor, String(), object_id);
 	if (!doc.insert(op))
 		return 0;
 	undo_stack.push(op.stamp);
 	return op.stamp;
 }
 
-template <typename FormatProvider>
-size_t RichText<FormatProvider>::del(size_t begin, size_t end)
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::del(size_t begin, size_t end)
 {
 	return del(toClosedRange(begin, end));
 }
 
-template <typename FormatProvider>
-size_t RichText<FormatProvider>::del(const ClosedRange &range)
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::del(const ClosedRange &range)
 {
 	Deletion op(doc.id(), doc.stamp(), range.begin, range.end);
 	if (!doc.del(op))
@@ -262,9 +265,9 @@ size_t RichText<FormatProvider>::del(const ClosedRange &range)
 	return op.stamp;
 }
 
-template <typename FormatProvider>
+template <typename FormatProvider, typename CharT>
 template <typename RangeType, typename T>
-size_t RichText<FormatProvider>::format(const std::string &style_name, size_t begin, size_t end, const T &value)
+size_t RichText<FormatProvider, CharT>::format(const std::string &style_name, size_t begin, size_t end, const T &value)
 {
 	if constexpr (std::is_same_v<RangeType, ClosedRange>)
 	{
@@ -281,9 +284,9 @@ size_t RichText<FormatProvider>::format(const std::string &style_name, size_t be
 	}
 }
 
-template <typename FormatProvider>
+template <typename FormatProvider, typename CharT>
 template <typename RangeType, typename T>
-size_t RichText<FormatProvider>::format(const std::string &style_name, RangeType range, const T &value)
+size_t RichText<FormatProvider, CharT>::format(const std::string &style_name, RangeType range, const T &value)
 {
 	Formatting<RangeType, T> op(doc.id(), doc.stamp(), style_name, range, value);
 	if (!doc.format(op))
@@ -291,67 +294,67 @@ size_t RichText<FormatProvider>::format(const std::string &style_name, RangeType
 	undo_stack.push(op.stamp);
 	return op.stamp;
 }
-template <typename FormatProvider>
+template <typename FormatProvider, typename CharT>
 template <typename T>
-T RichText<FormatProvider>::style(const std::string &style_name, size_t pos) const
+T RichText<FormatProvider, CharT>::style(const std::string &style_name, size_t pos) const
 {
 	return doc.template style<T>(doc.find(pos), style_name);
 }
 
-template <typename FormatProvider>
-OpenedRange RichText<FormatProvider>::toOpenedRange(size_t begin, size_t end) const
+template <typename FormatProvider, typename CharT>
+OpenedRange RichText<FormatProvider, CharT>::toOpenedRange(size_t begin, size_t end) const
 {
 	Anchor anchorBegin = doc.reversedAnchor(begin);
 	Anchor anchorEnd = doc.reversedAnchor(end);
 	return OpenedRange(anchorBegin, anchorEnd);
 }
 
-template <typename FormatProvider>
-ClosedRange RichText<FormatProvider>::toClosedRange(size_t begin, size_t end) const
+template <typename FormatProvider, typename CharT>
+ClosedRange RichText<FormatProvider, CharT>::toClosedRange(size_t begin, size_t end) const
 {
 	Anchor anchorBegin = doc.reversedAnchor(begin);
 	Anchor anchorEnd = doc.anchor(end);
 	return ClosedRange(anchorBegin, anchorEnd);
 }
 
-template <typename FormatProvider>
-Anchor RichText<FormatProvider>::toAnchor(size_t pos) const
+template <typename FormatProvider, typename CharT>
+Anchor RichText<FormatProvider, CharT>::toAnchor(size_t pos) const
 {
 	return doc.insertAnchor(pos);
 }
 
-template <typename FormatProvider>
-size_t RichText<FormatProvider>::toPos(const Anchor &anchor) const
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::toPos(const Anchor &anchor) const
 {
 	return doc.pos(anchor);
 }
 
-template <typename FormatProvider>
-void RichText<FormatProvider>::beginGroup()
+template <typename FormatProvider, typename CharT>
+void RichText<FormatProvider, CharT>::beginGroup()
 {
 	undo_stack.push(kGroupStart);
 }
 
-template <typename FormatProvider>
-void RichText<FormatProvider>::endGroup()
+template <typename FormatProvider, typename CharT>
+void RichText<FormatProvider, CharT>::endGroup()
 {
 	undo_stack.push(kGroupEnd);
 }
 
-template <typename FormatProvider>
-bool RichText<FormatProvider>::canUndo() const
+template <typename FormatProvider, typename CharT>
+bool RichText<FormatProvider, CharT>::canUndo() const
 {
 	return !undo_stack.empty();
 }
 
-template <typename FormatProvider>
-bool RichText<FormatProvider>::canRedo() const
+template <typename FormatProvider, typename CharT>
+bool RichText<FormatProvider, CharT>::canRedo() const
 {
 	return !redo_stack.empty();
 }
 
-template <typename FormatProvider>
-void RichText<FormatProvider>::undo()
+template <typename FormatProvider, typename CharT>
+void RichText<FormatProvider, CharT>::undo()
 {
 	if (undo_stack.empty())
 		return;
@@ -399,8 +402,8 @@ void RichText<FormatProvider>::undo()
 	}
 }
 
-template <typename FormatProvider>
-void RichText<FormatProvider>::redo()
+template <typename FormatProvider, typename CharT>
+void RichText<FormatProvider, CharT>::redo()
 {
 	if (redo_stack.empty())
 		return;
@@ -447,8 +450,8 @@ void RichText<FormatProvider>::redo()
 	}
 }
 
-template <typename FormatProvider>
-size_t RichText<FormatProvider>::undoSpecific(OperationID opID)
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::undoSpecific(OperationID opID)
 {
 	UndoOperation op(doc.id(), doc.stamp(), opID);
 	if (!doc.undo(op))
@@ -457,8 +460,8 @@ size_t RichText<FormatProvider>::undoSpecific(OperationID opID)
 	return op.stamp;
 }
 
-template <typename FormatProvider>
-size_t RichText<FormatProvider>::redoSpecific(OperationID opID)
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::redoSpecific(OperationID opID)
 {
 	RedoOperation op(doc.id(), doc.stamp(), opID);
 	if (!doc.redo(op))
@@ -467,38 +470,38 @@ size_t RichText<FormatProvider>::redoSpecific(OperationID opID)
 	return op.stamp;
 }
 
-template <typename FormatProvider>
-ReplicaID RichText<FormatProvider>::replicaID() const
+template <typename FormatProvider, typename CharT>
+ReplicaID RichText<FormatProvider, CharT>::replicaID() const
 {
 	return doc.id();
 }
 
-template <typename FormatProvider>
-ReplicaID RichText<FormatProvider>::origin() const
+template <typename FormatProvider, typename CharT>
+ReplicaID RichText<FormatProvider, CharT>::origin() const
 {
 	return doc.origin();
 }
 
-template <typename FormatProvider>
-bool RichText<FormatProvider>::apply(const Operation &op)
+template <typename FormatProvider, typename CharT>
+bool RichText<FormatProvider, CharT>::apply(const Operation &op)
 {
 	return doc.apply(op);
 }
 
-template <typename FormatProvider>
-void RichText<FormatProvider>::apply(const std::vector<std::unique_ptr<Operation>> &ops)
+template <typename FormatProvider, typename CharT>
+void RichText<FormatProvider, CharT>::apply(const std::vector<std::unique_ptr<Operation>> &ops)
 {
 	doc.apply(ops);
 }
 
-template <typename FormatProvider>
-std::vector<OperationID> RichText<FormatProvider>::frontline()
+template <typename FormatProvider, typename CharT>
+std::vector<OperationID> RichText<FormatProvider, CharT>::frontline()
 {
 	return doc.frontline();
 }
 
-template <typename FormatProvider>
-std::vector<std::unique_ptr<Operation>> RichText<FormatProvider>::diff(const std::vector<OperationID> &frontline)
+template <typename FormatProvider, typename CharT>
+std::vector<std::unique_ptr<Operation>> RichText<FormatProvider, CharT>::diff(const std::vector<OperationID> &frontline)
 {
 	return doc.diff(frontline);
 }

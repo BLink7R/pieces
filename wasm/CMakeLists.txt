@@ -6,8 +6,7 @@ add_executable(pieces-wasm
 target_include_directories(pieces-wasm PRIVATE ../src)
 
 find_package(stduuid CONFIG REQUIRED)
-find_package(utf8cpp CONFIG REQUIRED)
-target_link_libraries(pieces-wasm PRIVATE stduuid utf8cpp::utf8cpp)
+target_link_libraries(pieces-wasm PRIVATE stduuid )
 
 # Emscripten specific settings
 target_link_options(pieces-wasm PRIVATE

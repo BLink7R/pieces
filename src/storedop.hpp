@@ -151,13 +151,6 @@ struct StoredContent : public UndoRedoableOp
 		return OperationType::Insert;
 	}
 
-	// serialize the content as a null-terminated string.
-	// text segments return the text buffer, inline objects return a placeholder char.
-	virtual const char *rawData() const
-	{
-		return nullptr;
-	}
-
 	// whether the content is an inline object (image/shape) instead of plain text
 	virtual bool isObject() const
 	{

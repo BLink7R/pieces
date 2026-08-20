@@ -109,14 +109,15 @@ struct ClosedRange
 		: begin(begin), end(end) {}
 };
 
+template <typename CharT = char>
 struct Insertion : public Operation
 {
 	Anchor anchor;
-	std::string str;		 // text payload, empty when inserting an inline object
-	std::string object_id;	 // non-empty when inserting an inline object (image/shape) reference
+	std::basic_string<CharT> str;	// text payload, empty when inserting an inline object
+	std::string object_id;			// non-empty when inserting an inline object (image/shape) reference
 
 	Insertion() = default;
-	Insertion(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor, std::string text, std::string object_id = {})
+	Insertion(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor, std::basic_string<CharT> text, std::string object_id = {})
 		: Operation(replica, stamp, OperationType::Insert), anchor(anchor), str(std::move(text)), object_id(std::move(object_id)) {}
 };
 
