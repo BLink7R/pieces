@@ -173,7 +173,7 @@ void runDeleteUndoRedoTest(int numOps = 200, int start_len = 5000)
 	std::random_device rd;
 	std::mt19937 gen(rd());
 
-	PieceCRDT<void, char> doc;
+	TextCRDT<char> doc;
 	SimpleDeferredText validator;
 	validator.insert(0, "");
 	uint32_t op_stamp = 2;

@@ -92,11 +92,6 @@ struct Segment : public StoredContent
 	Segment &operator=(const Segment &other) = delete;
 };
 
-struct PlaceHolder : public StoredContent
-{
-	PlaceHolder() = default;
-};
-
 struct PieceInfo
 {
 	size_t total{0};
@@ -133,18 +128,23 @@ template <typename CharT>
 struct Piece
 {
 	StoredContent *seg{nullptr};
-	const CharT *data{nullptr};
 	uint32_t len{0};
-	uint32_t seg_offset{0};
+	uint32_t seg_offset{0}; // 0 to seg->size, offset within the segment, not the piece
 	StoredRangeOp *tombStone{nullptr};
 	Formats styles;
 
 	Piece() = default;
 	Piece(StoredContent *seg)
 		: seg(seg),
-		  data(seg->isObject() ? objectPlaceholder<CharT>() : static_cast<Segment<CharT> *>(seg)->data.get()),
-		  len(static_cast<uint32_t>(seg->size)),
+		  len(seg->size),
 		  seg_offset(0) {}
+
+	const CharT *data() const
+	{
+		if (seg->isObject())
+			return objectPlaceholder<CharT>();
+		return static_cast<Segment<CharT> *>(seg)->data.get() + seg_offset;
+	}
 
 	bool isRemoved() const
 	{
@@ -186,7 +186,7 @@ inline const CharT *objectPlaceholder()
 template <typename CharT>
 struct StoredObject : public StoredContent
 {
-	std::string id;			   // reference to the external object data
+	std::string id;				  // reference to the external object data
 	Piece<CharT> *piece{nullptr}; // the single piece derived from this object
 
 	StoredObject(std::string id)
@@ -383,7 +383,7 @@ public:
 	}
 
 	// return the right part
-	Iterator split(Iterator it, int32_t offset)
+	Iterator split(Iterator it, uint32_t offset)
 	{
 		assert(0 < offset && offset < it->len);
 
@@ -391,7 +391,6 @@ public:
 		// character and byte-unit offset within the piece
 		Piece<CharT> new_node = *it;
 		it->len = offset;
-		new_node.data += offset;
 		new_node.seg_offset += offset;
 		new_node.len -= offset;
 		it.key() = it->size(); // no need to update(), insertBefore() will do it

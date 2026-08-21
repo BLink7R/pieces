@@ -64,7 +64,7 @@ public:
 		return &styles[static_cast<std::size_t>(it->second)];
 	}
 
-	// PieceCRDT formatting integration: map Formatting.op.key (string) -> style key
+	// RichTextCRDT formatting integration: map Formatting.op.key (string) -> style key
 	template <typename RangeType, typename T>
 	int styleKey(const Formatting<RangeType, T> &op)
 	{

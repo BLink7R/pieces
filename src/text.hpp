@@ -7,6 +7,7 @@
 #include <stack>
 #include <vector>
 
+#include "richtextcrdt.hpp"
 #include "textcrdt.hpp"
 
 // TODO: check index is valid
@@ -14,12 +15,12 @@ template <typename CharT = char>
 class PlainText
 {
 private:
-	PieceCRDT<void, CharT> doc;
+	TextCRDT<CharT> doc;
 	std::stack<uint32_t> undo_stack;
 	std::stack<uint32_t> redo_stack;
 
 public:
-	using Iterator = PieceCRDT<void, CharT>::Iterator;
+	using Iterator = TextCRDT<CharT>::Iterator;
 	using String = std::basic_string<CharT>;
 
 	PlainText() = default;
@@ -90,7 +91,7 @@ template <typename FormatProvider, typename CharT = char>
 class RichText
 {
 private:
-	PieceCRDT<FormatProvider, CharT> doc;
+	RichTextCRDT<FormatProvider, CharT> doc;
 	std::stack<uint32_t> undo_stack;
 	std::stack<uint32_t> redo_stack;
 
@@ -98,7 +99,7 @@ private:
 	static constexpr uint32_t kGroupEnd = std::numeric_limits<uint32_t>::max() - 1;
 
 public:
-	using Iterator = PieceCRDT<FormatProvider, CharT>::Iterator;
+	using Iterator = RichTextCRDT<FormatProvider, CharT>::Iterator;
 	using String = std::basic_string<CharT>;
 
 	RichText() = default;

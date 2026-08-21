@@ -142,7 +142,7 @@ struct StoredRedo : public StoredOperation
 struct StoredContent : public UndoRedoableOp
 {
 	StoredAnchor anchor;
-	int size;
+	int32_t size;
 	mutable std::vector<StoredContent *> child;				   // as segments are usually small, vector is faster
 	mutable std::unique_ptr<StoredDeletion> undo_del{nullptr}; // when insertion is undone, it needs an extra deletion
 

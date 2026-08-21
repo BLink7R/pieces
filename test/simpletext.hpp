@@ -246,7 +246,7 @@ public:
 		return styles[static_cast<std::size_t>(key)].default_value;
 	}
 
-	// Called by PieceCRDT::format to map style name to integer key.
+	// Called by RichTextCRDT::format to map style name to integer key.
 	int styleKey(const std::string &style_name) const
 	{
 		auto it = name_to_key.find(style_name);
@@ -270,7 +270,7 @@ public:
 	}
 };
 
-class PieceCRDTValidator : public PieceCRDT<void, char>
+class PieceCRDTValidator : public TextCRDT<char>
 {
 public:
 	// closed range for history index
@@ -308,7 +308,7 @@ public:
 		delete_count.resize(total_size, false);
 		for (auto it = this->begin(), end_it = this->end(); it != end_it; ++it)
 		{
-			total_str.append(it->data, it->len);
+			total_str.append(it->data(), it->len);
 		}
 
 		//
