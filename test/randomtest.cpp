@@ -467,14 +467,14 @@ void runInlineObjectTest(int numOps)
 	std::random_device rd;
 	std::mt19937 gen(rd());
 
-	PlainText<> a;
-	PlainText<> b(a.origin());
+	RichText<TestFormatProvider> a;
+	RichText<TestFormatProvider> b(a.origin());
 	SimpleText validator;
 	size_t tot_chars = 0;
 
 	for (int i = 0; i < numOps; ++i)
 	{
-		PlainText<> *target = (gen() % 2 == 0) ? &a : &b;
+		RichText<TestFormatProvider> *target = (gen() % 2 == 0) ? &a : &b;
 		std::uniform_int_distribution<int> op_dist(0, 2);
 		switch (op_dist(gen))
 		{

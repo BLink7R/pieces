@@ -140,7 +140,9 @@ struct Piece
 		  seg_offset(0) {}
 
 	const CharT *data() const
-	{
+	{ // TODO: paragraph head and inline object should have another method to get data
+		if (seg->type() == OperationType::ParagraphHead)
+			return newlinePlaceholder<CharT>();
 		if (seg->isObject())
 			return objectPlaceholder<CharT>();
 		return static_cast<Segment<CharT> *>(seg)->data.get() + seg_offset;
@@ -180,9 +182,27 @@ inline const CharT *objectPlaceholder()
 	}
 }
 
-// inline objects (image/shape/table) are atomic len-1 contents: never split, so a single
-// piece pointer is enough. The payload is referenced by an external id and is not
-// replicated inside the text CRDT.
+// paragraph head serialized as a newline character: it terminates the paragraph
+// it annotates, so the paragraph head itself renders as a line break.
+template <typename CharT>
+inline const CharT *newlinePlaceholder()
+{
+	if constexpr (std::is_same_v<CharT, char>)
+	{
+		static const char placeholder[] = "\n";
+		return placeholder;
+	}
+	else
+	{
+		static const char16_t placeholder[] = u"\n";
+		return placeholder;
+	}
+}
+
+// inline contents (paragraph head / inline object) are atomic size-1 contents:
+// never split, so a single piece pointer is enough. The payload data model is
+// managed out-of-band (see inlineobj.hpp); the CRDT storage only keeps the id
+// reference and is only responsible for inserting the object into the document.
 template <typename CharT>
 struct StoredObject : public StoredContent
 {
@@ -198,6 +218,34 @@ struct StoredObject : public StoredContent
 	bool isObject() const override
 	{
 		return true;
+	}
+};
+
+// paragraph head: atomic size-1 object placed at the start of the paragraph.
+// a paragraph head has no external payload id; it renders as a newline.
+template <typename CharT>
+struct StoredParagraphHead : public StoredObject<CharT>
+{
+	StoredParagraphHead()
+		: StoredObject<CharT>(std::string())
+	{
+	}
+
+	OperationType type() const override
+	{
+		return OperationType::ParagraphHead;
+	}
+};
+
+// general inline object (image/shape/table/...): atomic size-1
+template <typename CharT>
+struct StoredInlineObject : public StoredObject<CharT>
+{
+	using StoredObject<CharT>::StoredObject;
+
+	OperationType type() const override
+	{
+		return OperationType::InlineObject;
 	}
 };
 

@@ -41,6 +41,14 @@ protected:
 		assert(false && "format operation is not supported");
 	}
 
+	// plain text only supports plain text insertion; paragraph head / inline object
+	// insertion is handled by the derived rich-text class.
+	virtual bool applyObjectInsertOp(const Operation &op)
+	{
+		(void)op;
+		return false;
+	}
+
 public:
 	using Iterator = typename PieceTree<4, CharT>::Iterator;
 	using String = std::basic_string<CharT>;
@@ -231,13 +239,26 @@ public:
 					assert(content->anchor.seg != nullptr);
 					const auto *parent = content->anchor.seg;
 					Anchor anchor(parent->operationID(), content->anchor.offset);
-					if (content->isObject())
-						res.push_back(std::make_unique<Insertion<CharT>>(replica.id, i, anchor, String(), static_cast<const StoredObject<CharT> *>(content)->id));
-					else
-					{
-						const auto *text_seg = static_cast<const Segment<CharT> *>(content);
-						res.push_back(std::make_unique<Insertion<CharT>>(replica.id, i, anchor, String(text_seg->data.get())));
-					}
+					const auto *text_seg = static_cast<const Segment<CharT> *>(content);
+					res.push_back(std::make_unique<Insertion<CharT>>(replica.id, i, anchor, String(text_seg->data.get())));
+					break;
+				}
+				case OperationType::ParagraphHead:
+				{
+					const auto *obj = static_cast<const StoredObject<CharT> *>(stored);
+					assert(obj->anchor.seg != nullptr);
+					const auto *parent = obj->anchor.seg;
+					Anchor anchor(parent->operationID(), obj->anchor.offset);
+					res.push_back(std::make_unique<ParagraphHeadInsert>(replica.id, i, anchor));
+					break;
+				}
+				case OperationType::InlineObject:
+				{
+					const auto *obj = static_cast<const StoredObject<CharT> *>(stored);
+					assert(obj->anchor.seg != nullptr);
+					const auto *parent = obj->anchor.seg;
+					Anchor anchor(parent->operationID(), obj->anchor.offset);
+					res.push_back(std::make_unique<InlineObjectInsert>(replica.id, i, anchor, obj->id));
 					break;
 				}
 				case OperationType::Delete:
@@ -288,6 +309,9 @@ public:
 			return undo(static_cast<const UndoOperation &>(op));
 		case OperationType::Redo:
 			return redo(static_cast<const RedoOperation &>(op));
+		case OperationType::ParagraphHead:
+		case OperationType::InlineObject:
+			return applyObjectInsertOp(op);
 		case OperationType::RangeFormat:
 			return applyFormatOp(op);
 		default:
@@ -297,15 +321,13 @@ public:
 
 	bool insert(const Insertion<CharT> &op)
 	{
-		if (op.str.empty() && op.object_id.empty())
+		if (op.str.empty())
 			return false; // no-op
 		auto anchor = toStored(op.anchor);
 		if (anchor.seg == nullptr)
 			return false; // invalid anchor
 
-		StoredContent *segment = op.object_id.empty()
-									 ? static_cast<StoredContent *>(storeOp<Segment<CharT>>(op.replica, op.stamp, op.str))
-									 : static_cast<StoredContent *>(storeOp<StoredObject<CharT>>(op.replica, op.stamp, op.object_id));
+		StoredContent *segment = storeOp<Segment<CharT>>(op.replica, op.stamp, op.str);
 		if (segment == nullptr)
 			return false; // duplicate operation
 
@@ -395,6 +417,8 @@ protected:
 		switch (target->type())
 		{
 		case OperationType::Insert:
+		case OperationType::ParagraphHead:
+		case OperationType::InlineObject:
 			redoInsertion(static_cast<StoredContent *>(target));
 			break;
 		case OperationType::Delete:
@@ -421,6 +445,8 @@ protected:
 		switch (target->type())
 		{
 		case OperationType::Insert:
+		case OperationType::ParagraphHead:
+		case OperationType::InlineObject:
 			undoInsertion(static_cast<StoredContent *>(target));
 			break;
 		case OperationType::Delete:
@@ -762,7 +788,9 @@ protected:
 			return StoredAnchor();
 
 		auto &seg_ptr = replica->operations[anchor.stamp];
-		if (!seg_ptr || seg_ptr->type() != OperationType::Insert)
+		if (!seg_ptr || (seg_ptr->type() != OperationType::Insert &&
+						 seg_ptr->type() != OperationType::ParagraphHead &&
+						 seg_ptr->type() != OperationType::InlineObject))
 			return StoredAnchor();
 
 		StoredContent *seg = static_cast<StoredContent *>(seg_ptr.get());

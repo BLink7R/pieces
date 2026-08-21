@@ -146,6 +146,19 @@ protected:
 		undoFormat(op);
 	}
 
+	bool applyObjectInsertOp(const Operation &op) override
+	{
+		switch (op.type)
+		{
+		case OperationType::ParagraphHead:
+			return insertParagraphHead(static_cast<const ParagraphHeadInsert &>(op));
+		case OperationType::InlineObject:
+			return insertInlineObject(static_cast<const InlineObjectInsert &>(op));
+		default:
+			return false;
+		}
+	}
+
 public:
 	using typename Base::Iterator;
 	using typename Base::String;
@@ -158,6 +171,20 @@ public:
 	auto &formatProvider()
 	{
 		return format_provider;
+	}
+
+	// insert an atomic size-1 paragraph head (describes paragraph attributes)
+	bool insertParagraphHead(const ParagraphHeadInsert &op)
+	{
+		return insertObjectImpl<StoredParagraphHead<CharT>>(op.replica, op.stamp, op.anchor);
+	}
+
+	// insert an atomic size-1 inline object (image/shape/table/...)
+	bool insertInlineObject(const InlineObjectInsert &op)
+	{
+		if (op.id.empty())
+			return false; // no-op
+		return insertObjectImpl<StoredInlineObject<CharT>>(op.replica, op.stamp, op.anchor, op.id);
 	}
 
 	template <typename T>
@@ -196,6 +223,23 @@ public:
 		stored_op->right = &*right_it;
 
 		redoFormat(stored_op);
+		return true;
+	}
+
+private:
+	template <typename T, typename... Args>
+	bool insertObjectImpl(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor, Args &&...args)
+	{
+		auto stored_anchor = Base::toStored(anchor);
+		if (stored_anchor.seg == nullptr)
+			return false; // invalid anchor
+
+		T *segment = Base::template storeOp<T>(replica, stamp, std::forward<Args>(args)...);
+		if (segment == nullptr)
+			return false; // duplicate operation
+
+		segment->anchor = stored_anchor;
+		Base::piece_tree.insert(segment);
 		return true;
 	}
 };

@@ -135,6 +135,8 @@ EMSCRIPTEN_BINDINGS(my_module)
 {
 	enum_<OperationType>("OperationType")
 		.value("Insert", OperationType::Insert)
+		.value("ParagraphHead", OperationType::ParagraphHead)
+		.value("InlineObject", OperationType::InlineObject)
 		.value("Delete", OperationType::Delete)
 		.value("RangeFormat", OperationType::RangeFormat)
 		.value("Undo", OperationType::Undo)
@@ -166,8 +168,24 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.field("type", &Operation::type)
 		// Insertion<char16_t> specific fields
 		.field("anchor", &Insertion<char16_t>::anchor)
-		.field("str", &Insertion<char16_t>::str)
-		.field("object_id", &Insertion<char16_t>::object_id);
+		.field("str", &Insertion<char16_t>::str);
+
+	value_object<ParagraphHeadInsert>("ParagraphHeadInsert")
+		// Base Operation fields
+		.field("replica", &getOpReplica, &setOpReplica)
+		.field("stamp", &Operation::stamp)
+		.field("type", &Operation::type)
+		// ParagraphHeadInsert specific fields
+		.field("anchor", &ParagraphHeadInsert::anchor);
+
+	value_object<InlineObjectInsert>("InlineObjectInsert")
+		// Base Operation fields
+		.field("replica", &getOpReplica, &setOpReplica)
+		.field("stamp", &Operation::stamp)
+		.field("type", &Operation::type)
+		// InlineObjectInsert specific fields
+		.field("anchor", &InlineObjectInsert::anchor)
+		.field("id", &InlineObjectInsert::id);
 
 	value_object<Deletion>("Deletion")
 		// Base Operation fields
@@ -203,8 +221,6 @@ EMSCRIPTEN_BINDINGS(my_module)
 		.function("slice", select_overload<std::u16string(size_t, size_t) const>(&PlainText<char16_t>::slice))
 		.function("insert", select_overload<size_t(size_t, const std::u16string &)>(&PlainText<char16_t>::insert))
 		.function("insertAnchor", select_overload<size_t(const Anchor &, const std::u16string &)>(&PlainText<char16_t>::insert))
-		.function("insertObject", select_overload<size_t(size_t, const std::string &)>(&PlainText<char16_t>::insertObject))
-		.function("insertObjectAnchor", select_overload<size_t(const Anchor &, const std::string &)>(&PlainText<char16_t>::insertObject))
 		.function("del", select_overload<size_t(size_t, size_t)>(&PlainText<char16_t>::del))
 		.function("delAnchor", select_overload<size_t(const ClosedRange &)>(&PlainText<char16_t>::del))
 		.function("toRange", &PlainText<char16_t>::toClosedRange)

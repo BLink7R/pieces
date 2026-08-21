@@ -48,8 +48,6 @@ public:
 	size_t insert(size_t offset, const String &text);
 	// size_t insert(size_t row, size_t column, const String &text);
 	size_t insert(const Anchor &anchor, const String &text);
-	size_t insertObject(size_t offset, const std::string &object_id);
-	size_t insertObject(const Anchor &anchor, const std::string &object_id);
 	size_t del(size_t begin, size_t end);
 	// size_t del(size_t row_begin, size_t column_begin, size_t row_end, size_t column_end);
 	size_t del(const ClosedRange &range);
@@ -127,6 +125,8 @@ public:
 	size_t insert(const Anchor &anchor, const String &text);
 	size_t insertObject(size_t offset, const std::string &object_id);
 	size_t insertObject(const Anchor &anchor, const std::string &object_id);
+	size_t insertParagraphHead(size_t offset);
+	size_t insertParagraphHead(const Anchor &anchor);
 	size_t del(size_t begin, size_t end);
 	size_t del(const ClosedRange &range);
 	template <typename RangeType, typename T>
@@ -243,8 +243,25 @@ size_t RichText<FormatProvider, CharT>::insertObject(size_t offset, const std::s
 template <typename FormatProvider, typename CharT>
 size_t RichText<FormatProvider, CharT>::insertObject(const Anchor &anchor, const std::string &object_id)
 {
-	Insertion<CharT> op(doc.id(), doc.stamp(), anchor, String(), object_id);
-	if (!doc.insert(op))
+	InlineObjectInsert op(doc.id(), doc.stamp(), anchor, object_id);
+	if (!doc.insertInlineObject(op))
+		return 0;
+	undo_stack.push(op.stamp);
+	return op.stamp;
+}
+
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::insertParagraphHead(size_t offset)
+{
+	Anchor anchor_val = doc.insertAnchor(offset);
+	return insertParagraphHead(anchor_val);
+}
+
+template <typename FormatProvider, typename CharT>
+size_t RichText<FormatProvider, CharT>::insertParagraphHead(const Anchor &anchor)
+{
+	ParagraphHeadInsert op(doc.id(), doc.stamp(), anchor);
+	if (!doc.insertParagraphHead(op))
 		return 0;
 	undo_stack.push(op.stamp);
 	return op.stamp;

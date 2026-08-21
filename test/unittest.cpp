@@ -168,10 +168,10 @@ TEST(RichTextTest, CoveredOp)
 	EXPECT_EQ(doc.style<int>("intStyle", 14), -1);
 }
 
-TEST(PlainTextTest, InlineObject)
+TEST(RichTextTest, InlineObject)
 {
 	const std::string obj_marker = "\xFF";
-	PlainText<> text;
+	RichText<TestFormatProvider> text;
 	text.insert(0, "hello");
 	text.insertObject(5, "obj1");
 	text.insert(6, " world");
@@ -189,14 +189,14 @@ TEST(PlainTextTest, InlineObject)
 	EXPECT_EQ(text.toString(), "hello world");
 }
 
-TEST(PlainTextTest, InlineObjectSync)
+TEST(RichTextTest, InlineObjectSync)
 {
 	const std::string obj_marker = "\xFF";
-	PlainText<> a;
+	RichText<TestFormatProvider> a;
 	a.insert(0, "hello");
 	a.insertObject(5, "img1");
 
-	PlainText<> b(a.origin());
+	RichText<TestFormatProvider> b(a.origin());
 	b.apply(a.diff(b.frontline()));
 	EXPECT_EQ(b.toString(), "hello" + obj_marker);
 
@@ -245,4 +245,38 @@ TEST(PlainTextTest, Utf16Sync)
 	a.apply(b.diff(a.frontline()));
 	EXPECT_EQ(a.toString(), std::u16string(u"hello") + u"\U0001F600");
 	EXPECT_EQ(b.toString(), std::u16string(u"hello") + u"\U0001F600");
+}
+
+TEST(RichTextTest, ParagraphHead)
+{
+	const std::string nl = "\n";
+	RichText<TestFormatProvider> doc;
+	doc.insert(0, "first paragraph");
+	// insert a paragraph head at the start of the document
+	doc.insertParagraphHead(0);
+	EXPECT_EQ(doc.toString(), nl + "first paragraph");
+
+	// plain text only supports plain text insertion
+	PlainText<> plain;
+	plain.insert(0, "hello");
+	EXPECT_EQ(plain.toString(), "hello");
+}
+
+TEST(RichTextTest, ParagraphHeadSync)
+{
+	const std::string nl = "\n";
+	RichText<TestFormatProvider> a;
+	a.insert(0, "para text");
+	a.insertParagraphHead(0);
+
+	RichText<TestFormatProvider> b(a.origin());
+	b.apply(a.diff(b.frontline()));
+	EXPECT_EQ(b.toString(), nl + "para text");
+
+	// undo the paragraph head insertion converges across replicas
+	OperationID head_op(a.replicaID(), 3);
+	b.undoSpecific(head_op);
+	EXPECT_EQ(b.toString(), "para text");
+	a.apply(b.diff(a.frontline()));
+	EXPECT_EQ(a.toString(), "para text");
 }

@@ -55,23 +55,6 @@ size_t PlainText<CharT>::insert(const Anchor &anchor, const String &text)
 }
 
 template <typename CharT>
-size_t PlainText<CharT>::insertObject(size_t offset, const std::string &object_id)
-{
-	Anchor anchor = doc.insertAnchor(offset);
-	return insertObject(anchor, object_id);
-}
-
-template <typename CharT>
-size_t PlainText<CharT>::insertObject(const Anchor &anchor, const std::string &object_id)
-{
-	Insertion<CharT> op(doc.id(), doc.stamp(), anchor, String(), object_id);
-	if (!doc.insert(op))
-		return 0;
-	undo_stack.push(op.stamp);
-	return op.stamp;
-}
-
-template <typename CharT>
 size_t PlainText<CharT>::del(size_t begin, size_t end)
 {
 	return del(toClosedRange(begin, end));

@@ -21,11 +21,13 @@ export interface ClosedRange {
 
 export enum OperationType {
     Insert = 0,
-    Delete = 1,
-    RangeFormat = 2,
-    ParaFormat = 3,
-    Undo = 4,
-    Redo = 5,
+    ParagraphHead = 1,
+    InlineObject = 2,
+    Delete = 3,
+    RangeFormat = 4,
+    ParaFormat = 5,
+    Undo = 6,
+    Redo = 7,
 }
 
 export interface Operation {
@@ -38,7 +40,17 @@ export interface Insertion extends Operation {
     type: OperationType.Insert;
     anchor: Anchor;
     str: string;
-    object_id: string;
+}
+
+export interface ParagraphHeadInsert extends Operation {
+    type: OperationType.ParagraphHead;
+    anchor: Anchor;
+}
+
+export interface InlineObjectInsert extends Operation {
+    type: OperationType.InlineObject;
+    anchor: Anchor;
+    id: string;
 }
 
 export interface Deletion extends Operation {
@@ -56,7 +68,7 @@ export interface RedoOperation extends Operation {
     target: OperationID;
 }
 
-export type AnyOperation = Insertion | Deletion | UndoOperation | RedoOperation;
+export type AnyOperation = Insertion | ParagraphHeadInsert | InlineObjectInsert | Deletion | UndoOperation | RedoOperation;
 
 export class PlainText {
     constructor();
@@ -66,8 +78,6 @@ export class PlainText {
     slice(start: number, end: number): string;
     insert(index: number, text: string): number;
     insertAnchor(anchor: Anchor, text: string): number;
-    insertObject(index: number, object_id: string): number;
-    insertObjectAnchor(anchor: Anchor, object_id: string): number;
     del(start: number, end: number): number;
     delAnchor(range: ClosedRange): number;
     toRange(start: number, end: number): ClosedRange;

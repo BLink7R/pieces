@@ -35,6 +35,8 @@ struct OperationID
 enum class OperationType : uint8_t
 {
 	Insert,
+	ParagraphHead,
+	InlineObject,
 	Delete,
 	RangeFormat,
 	ParaFormat,
@@ -109,16 +111,41 @@ struct ClosedRange
 		: begin(begin), end(end) {}
 };
 
+// insertion of plain text
 template <typename CharT = char>
 struct Insertion : public Operation
 {
 	Anchor anchor;
-	std::basic_string<CharT> str;	// text payload, empty when inserting an inline object
-	std::string object_id;			// non-empty when inserting an inline object (image/shape) reference
+	std::basic_string<CharT> str;
 
 	Insertion() = default;
-	Insertion(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor, std::basic_string<CharT> text, std::string object_id = {})
-		: Operation(replica, stamp, OperationType::Insert), anchor(anchor), str(std::move(text)), object_id(std::move(object_id)) {}
+	Insertion(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor, std::basic_string<CharT> text)
+		: Operation(replica, stamp, OperationType::Insert), anchor(anchor), str(std::move(text)) {}
+};
+
+// insertion of a paragraph head: an atomic size-1 object describing paragraph
+// attributes, placed at the start of the paragraph it annotates.
+// a paragraph head has no external payload id; its data is a newline character.
+struct ParagraphHeadInsert : public Operation
+{
+	Anchor anchor;
+
+	ParagraphHeadInsert() = default;
+	ParagraphHeadInsert(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor)
+		: Operation(replica, stamp, OperationType::ParagraphHead), anchor(anchor) {}
+};
+
+// insertion of a general inline object (image/shape/table/...): atomic size-1.
+// the payload data model is managed out-of-band, the CRDT storage only keeps
+// the id reference.
+struct InlineObjectInsert : public Operation
+{
+	Anchor anchor;
+	std::string id;
+
+	InlineObjectInsert() = default;
+	InlineObjectInsert(const ReplicaID &replica, uint32_t stamp, const Anchor &anchor, std::string id)
+		: Operation(replica, stamp, OperationType::InlineObject), anchor(anchor), id(std::move(id)) {}
 };
 
 // All ranges are inclusive on the left side, but the right side can be inclusive or exclusive.
