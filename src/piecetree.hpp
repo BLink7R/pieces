@@ -125,6 +125,9 @@ template <typename CharT>
 inline const CharT *objectPlaceholder();
 
 template <typename CharT>
+inline const CharT *newlinePlaceholder();
+
+template <typename CharT>
 struct Piece
 {
 	StoredContent *seg{nullptr};
@@ -308,9 +311,9 @@ class PieceTree : public Sequence<PieceInfo, Piece<CharT>, N>
 public:
 	using Base = Sequence<PieceInfo, Piece<CharT>, N>;
 	using Iterator = typename Base::Iterator;
-	using Node = typename Base::Node;
-	using InternalNode = typename Base::InternalNode;
-	using LeafNode = typename Base::LeafNode;
+	using NodeT = typename Base::NodeT;
+	using InternalNodeT = typename Base::InternalNodeT;
+	using LeafNodeT = typename Base::LeafNodeT;
 
 	PieceTree(Segment<CharT> *initial_segment)
 	{

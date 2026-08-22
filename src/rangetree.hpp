@@ -8,9 +8,9 @@ class RangeTree : public OrderedSet<RangeTag, N>
 public:
 	using Base = OrderedSet<RangeTag, N>;
 	using Iterator = typename Base::Iterator;
-	using Node = typename Base::Node;
-	using InternalNode = typename Base::InternalNode;
-	using LeafNode = typename Base::LeafNode;
+	using NodeT = typename Base::NodeT;
+	using InternalNodeT = typename Base::InternalNodeT;
+	using LeafNodeT = typename Base::LeafNodeT;
 
 	RangeTree() = default;
 	~RangeTree() = default;

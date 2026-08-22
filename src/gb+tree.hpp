@@ -81,21 +81,21 @@ class BPlusTree
 {
 protected:
 	static constexpr uint8_t ORDER = 2 * N - 1;
-	using Node = Node<K, ORDER>;
-	using InternalNode = InternalNode<K, ORDER>;
-	using LeafNode = Leaf;
-	using BaseIter = BaseIter<LeafNode>;
+	using NodeT = Node<K, ORDER>;
+	using InternalNodeT = InternalNode<K, ORDER>;
+	using LeafNodeT = Leaf;
+	using Iter = BaseIter<LeafNodeT>;
 
-	Node *root{nullptr};
-	LeafNode *first{nullptr};
-	LeafNode *last{nullptr};
+	NodeT *root{nullptr};
+	LeafNodeT *first{nullptr};
+	LeafNodeT *last{nullptr};
 	size_t sz{0};
 
 public:
 	BPlusTree()
 	{
-		root = first = last = new LeafNode();
-		auto sentinel = new SentinelNode<LeafNode>(last, 0);
+		root = first = last = new LeafNodeT();
+		auto sentinel = new SentinelNode<LeafNodeT>(last, 0);
 		last->next = sentinel;
 	}
 	~BPlusTree() {}
@@ -104,17 +104,17 @@ public:
 
 protected:
 	template <typename... Args>
-	BaseIter insertLeaf(LeafNode *leaf, uint8_t index, Args &&...args)
+	Iter insertLeaf(LeafNodeT *leaf, uint8_t index, Args &&...args)
 	{
 		++sz;
 		if (leaf->count < ORDER)
 		{
 			insertNode(leaf, index, std::forward<Args>(args)...);
-			return BaseIter(leaf, index);
+			return Iter(leaf, index);
 		}
 		else
 		{
-			LeafNode *new_leaf = splitNode(leaf, index, std::forward<Args>(args)...);
+			LeafNodeT *new_leaf = splitNode(leaf, index, std::forward<Args>(args)...);
 			if (leaf->next.isSpecial())
 			{
 				last = new_leaf;
@@ -126,12 +126,12 @@ protected:
 			new_leaf->next = leaf->next;
 			new_leaf->prev = leaf;
 			leaf->next = new_leaf;
-			return index < N ? BaseIter(leaf, index) : BaseIter(new_leaf, index - N);
+			return index < N ? Iter(leaf, index) : Iter(new_leaf, index - N);
 		}
 	}
 
 private:
-	void insertInternal(InternalNode *node, uint8_t index, const K &key, Node *child)
+	void insertInternal(InternalNodeT *node, uint8_t index, const K &key, NodeT *child)
 	{
 		if (node->count < ORDER)
 			insertNode(node, index, key, child);
@@ -149,7 +149,7 @@ private:
 		node->set(index, std::forward<Args>(args)...);
 		++node->count;
 
-		for (Node *current = node; current->parent; current = current->parent)
+		for (NodeT *current = node; current->parent; current = current->parent)
 		{
 			K new_key = Summarizer()(current->keys.data(), current->count);
 			if (new_key != current->parent->keys[current->index])
@@ -190,7 +190,7 @@ private:
 		}
 		else
 		{
-			InternalNode *new_root = new InternalNode();
+			InternalNodeT *new_root = new InternalNodeT();
 			new_root->set(0, Summarizer()(node->keys.data(), node->count), node);
 			new_root->set(1, Summarizer()(new_node->keys.data(), new_node->count), new_node);
 			new_root->count = 2;
@@ -398,27 +398,27 @@ class Sequence : public BPlusTree<K, LeafNode<K, V, 2 * N - 1>, N, AddSummarizer
 {
 protected:
 	using Base = BPlusTree<K, LeafNode<K, V, 2 * N - 1>, N, AddSummarizer<K>>;
-	using Node = typename Base::Node;
-	using InternalNode = typename Base::InternalNode;
-	using LeafNode = typename Base::LeafNode;
+	using NodeT = typename Base::NodeT;
+	using InternalNodeT = typename Base::InternalNodeT;
+	using LeafNodeT = typename Base::LeafNodeT;
 
 public:
 	Sequence() {}
 	~Sequence() {}
 
-	class Iterator : public PinnedIter<V, LeafNode>
+	class Iterator : public PinnedIter<V, LeafNodeT>
 	{
 		K offset{0};
 		friend class Sequence;
 
 	public:
-		using Base = PinnedIter<V, LeafNode>;
+		using Base = PinnedIter<V, LeafNodeT>;
 
-		Iterator(LeafNode *node = nullptr, uint8_t index = 0, K offset = 0)
+		Iterator(LeafNodeT *node = nullptr, uint8_t index = 0, K offset = 0)
 			: Base(node, index), offset(offset) {}
-		Iterator(const typename LeafNode::Cell *cell, K offset)
+		Iterator(const typename LeafNodeT::Cell *cell, K offset)
 			: Base(cell), offset(offset) {}
-		Iterator(const typename LeafNode::Cell *cell)
+		Iterator(const typename LeafNodeT::Cell *cell)
 			: Base(cell)
 		{
 			update();
@@ -428,13 +428,13 @@ public:
 		{
 			update();
 		}
-		Iterator(SentinelNode<LeafNode> *cell, K offset = 0)
+		Iterator(SentinelNode<LeafNodeT> *cell, K offset = 0)
 			: Base(cell), offset(offset) {}
 
 		void update()
 		{
 			uint8_t index = this->cell->index;
-			for (Node *current = this->cell->node; current; current = current->parent)
+			for (NodeT *current = this->cell->node; current; current = current->parent)
 			{
 				for (int i = 0; i < index; ++i)
 					offset += current->keys[i];
@@ -490,7 +490,7 @@ public:
 	template <typename T, typename Compare = std::less<>>
 	Iterator find(const T &pos, const Compare &cmp = Compare()) const
 	{
-		Node *current = this->root;
+		NodeT *current = this->root;
 		K accumulated{};
 		uint8_t index = 0;
 		while (1)
@@ -505,16 +505,16 @@ public:
 				return end();
 			if (current->is_leaf)
 				break;
-			current = static_cast<InternalNode *>(current)->subs[index];
+			current = static_cast<InternalNodeT *>(current)->subs[index];
 		}
-		return Iterator(static_cast<LeafNode *>(current), index, accumulated);
+		return Iterator(static_cast<LeafNodeT *>(current), index, accumulated);
 	}
 
 	Iterator insertBefore(Iterator it, V value)
 	{
 		auto key = value.size();
 		auto offset = it.position();
-		auto cell = new LeafNode::Cell(std::move(value));
+		auto cell = new LeafNodeT::Cell(std::move(value));
 		auto base_it = it.toBaseIter();
 		base_it = this->insertLeaf(base_it.node, base_it.index, key, cell);
 		return Iterator(base_it.node, base_it.index, offset);
@@ -528,15 +528,15 @@ public:
 	// update interval [begin, end]
 	void update(Iterator begin, Iterator end)
 	{
-		std::vector<Node *> stack;
-		for (Node *current = begin.leaf(); current; current = current->parent)
+		std::vector<NodeT *> stack;
+		for (NodeT *current = begin.leaf(); current; current = current->parent)
 		{
 			stack.push_back(current);
 		}
 
 		for (;;)
 		{
-			LeafNode *current = static_cast<LeafNode *>(stack[0]);
+			LeafNodeT *current = static_cast<LeafNodeT *>(stack[0]);
 			for (uint8_t i = 0; i < current->count; ++i)
 				current->keys[i] = current->subs[i]->value.size();
 			int l = 1;
@@ -546,7 +546,7 @@ public:
 				stack[l]->keys[index] = AddSummarizer<K>()(stack[l - 1]->keys.data(), stack[l - 1]->count);
 				if (index + 1 < stack[l]->count)
 				{
-					stack[l - 1] = static_cast<InternalNode *>(stack[l])->subs[index + 1];
+					stack[l - 1] = static_cast<InternalNodeT *>(stack[l])->subs[index + 1];
 					break;
 				}
 			}
@@ -560,13 +560,13 @@ public:
 				break;
 			}
 			for (l = l - 1; l > 0; --l)
-				stack[l - 1] = static_cast<InternalNode *>(stack[l])->subs[0];
+				stack[l - 1] = static_cast<InternalNodeT *>(stack[l])->subs[0];
 		}
 	}
 
 	void update(Iterator it)
 	{
-		for (Node *current = it.node; current->parent; current = current->parent)
+		for (NodeT *current = it.node; current->parent; current = current->parent)
 		{
 			K new_key = AddSummarizer<K>()(current->keys.data(), current->count);
 			if (new_key != current->parent->keys[current->index])
@@ -591,15 +591,15 @@ class OrderedSet : public BPlusTree<V *, KeyOnlyLeafNode<V, 2 * N - 1>, N, MaxSu
 {
 protected:
 	using Base = BPlusTree<V *, KeyOnlyLeafNode<V, 2 * N - 1>, N, MaxSummarizer<V *>>;
-	using Node = typename Base::Node;
-	using InternalNode = typename Base::InternalNode;
-	using LeafNode = typename Base::LeafNode;
+	using NodeT = typename Base::NodeT;
+	using InternalNodeT = typename Base::InternalNodeT;
+	using LeafNodeT = typename Base::LeafNodeT;
 
 public:
 	OrderedSet() {}
 	~OrderedSet() {}
 
-	using Iterator = PinnedIter<V, LeafNode>;
+	using Iterator = PinnedIter<V, LeafNodeT>;
 
 	Iterator begin() const
 	{
@@ -615,7 +615,7 @@ public:
 	template <typename T, typename Compare = std::less<>>
 	Iterator find(const T &key, const Compare &cmp = Compare()) const
 	{
-		Node *current = this->root;
+		NodeT *current = this->root;
 		size_t index = 0;
 		while (1)
 		{
@@ -630,16 +630,16 @@ public:
 				return end();
 			if (current->is_leaf)
 				break;
-			current = static_cast<InternalNode *>(current)->subs[index];
+			current = static_cast<InternalNodeT *>(current)->subs[index];
 		}
-		return Iterator(static_cast<LeafNode *>(current), static_cast<uint8_t>(index));
+		return Iterator(static_cast<LeafNodeT *>(current), static_cast<uint8_t>(index));
 	}
 
 	template <typename Compare = std::less<V>>
 	Iterator insert(V value, const Compare &cmp = Compare())
 	{
 		auto it = find(value, cmp);
-		auto *cell = new LeafNode::Cell(std::move(value));
+		auto *cell = new LeafNodeT::Cell(std::move(value));
 		auto base_it = it.toBaseIter();
 		base_it = this->insertLeaf(base_it.node, base_it.index, cell);
 		return Iterator(base_it.node, base_it.index);
