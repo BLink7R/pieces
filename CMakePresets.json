@@ -33,6 +33,17 @@
       "toolset": "host=x64"
     },
     {
+      "name": "x64-linux",
+      "displayName": "x64 Linux",
+      "inherits": [
+        "base",
+        "debug"
+      ],
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux"
+      }
+    },
+    {
       "name": "wasm",
       "displayName": "WebAssembly (Emscripten)",
       "description": "Build for WebAssembly using Emscripten and vcpkg",
